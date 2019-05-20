@@ -198,10 +198,6 @@ progress (■E tm tm₁) with progress tm
 progress (■E tm tm₁) | inj₂ (tm' , tm↓tm') = inj₂ (■E tm' tm₁ , ↓-■E₁ tm↓tm')
 progress (■E (■I a) tm₁) | inj₁ v-■I = inj₂ (_ , ↓-unbox)
 
-data Dec (A : Set) : Set where
-  yes : A → Dec A
-  no : ¬ A → Dec A
-
 data U : Set where
   U-Var : ℕ → U
   U-CVar : ℕ → List U → U
@@ -242,6 +238,15 @@ mutual
   untag (■I t) = U-■I (untag t)
   untag (■E t u) = U-■E (untag t) (untag u)
 
+data _<_ {A B : Set} : List A → List B → Set where
+  nil-< : ∀{x xs} → [] < (x ∷ xs)
+  cons-< : ∀{x xs y ys} → xs < ys → (x ∷ xs) < (y ∷ ys)
+
+data Check-σ (Δ : List (List Ty × Ty)) (Γ : List Ty) : List U → List Ty → Set where
+  yes-σ : ∀{us ts} → (xs : All (Tm Δ Γ) ts) → untag-All xs ≡ us → Check-σ Δ Γ us ts
+  too-few-terms : ∀{us ts} → us < ts → Check-σ Δ Γ us ts
+  too-many-terms : ∀{us ts} → ts < us → Check-σ Δ Γ us ts
+
 data Check (Δ : List (List Ty × Ty)) (Γ : List Ty) : U → Ty → Set where
   yes : ∀{u ty} → (tm : Tm Δ Γ ty) → untag tm ≡ u → Check Δ Γ u ty
   not-in-scope :
@@ -258,6 +263,13 @@ data Check (Δ : List (List Ty × Ty)) (Γ : List Ty) : U → Ty → Set where
     (Lookup n u Γ) →
     ¬(u ≡ t) →
     Check Δ Γ (U-Var n) t
+  Δ-type-mismatch :
+    ∀{t n σ} →
+    (Ψ : List Ty) →
+    (u : Ty) →
+    (Lookup n (Ψ , u) Δ) →
+    ¬(u ≡ t) →
+    Check Δ Γ (U-CVar n σ) t
 
 mutual
   untag-rename-All :
@@ -329,6 +341,8 @@ weaken-Check (not-in-scope-C ty-notin-Δ) =
   not-in-scope-C (λ Ψ ())
 weaken-Check (Γ-type-mismatch u lookup-u u¬≡ty) =
   Γ-type-mismatch u (there lookup-u) u¬≡ty
+weaken-Check (Δ-type-mismatch Ψ u lookup-u u¬≡ty) =
+  Δ-type-mismatch Ψ u lookup-u u¬≡ty
 
 eqTy : (t u : Ty) → t ≡ u ⊎ ¬(t ≡ u)
 eqTy (Arr t t₁) (Arr u u₁) with eqTy t u
@@ -350,11 +364,33 @@ eqTy (Box (x ∷ t) t₁) (Box (x ∷ u) u₁) | inj₁ refl | inj₁ refl = inj
 eqTy (Box (x ∷ t) t₁) (Box (x ∷ u) u₁) | inj₁ refl | inj₂ contra =
   inj₂ λ{ refl → contra refl }
 
-check : (Δ : List (List Ty × Ty)) → (Γ : List Ty) → (u : U) → (t : Ty) → Check Δ Γ u t
-check Δ Γ (U-→I x u) t = {!!}
-check Δ Γ (U-→E u u₁) t = {!!}
-check Δ Γ (U-■I u) t = {!!}
-check Δ Γ (U-■E u u₁) t = {!!}
-check Δ Γ (U-CVar a σ) t = {!!}
-check Δ [] (U-Var a) t = not-in-scope λ ()
-check Δ (x ∷ xs) (U-Var a) t = {!!}
+Dec : Set → Set
+Dec A = A ⊎ ¬ A
+
+mutual 
+  check-σ :
+    (Δ : List (List Ty × Ty)) →
+    (Γ : List Ty) →
+    (us : List U) →
+    (ts : List Ty) →
+    Check-σ Δ Γ us ts
+  check-σ Δ Γ [] [] = yes-σ All-nil refl
+  check-σ Δ Γ [] (x ∷ ts) = too-few-terms nil-<
+  check-σ Δ Γ (x ∷ us) [] = too-many-terms nil-<
+  check-σ Δ Γ (u ∷ us) (t ∷ ts) with check-σ Δ Γ us ts
+  check-σ Δ Γ (u ∷ us) (t ∷ ts) | yes-σ tms x = {!!}
+  check-σ Δ Γ (u ∷ us) (t ∷ ts) | too-few-terms x = {!!}
+  check-σ Δ Γ (u ∷ us) (t ∷ ts) | too-many-terms x = {!!}
+
+  check : (Δ : List (List Ty × Ty)) → (Γ : List Ty) → (u : U) → (t : Ty) → Check Δ Γ u t
+  check Δ Γ (U-→I x u) t = {!!}
+  check Δ Γ (U-→E u u₁) t = {!!}
+  check Δ Γ (U-■I u) t = {!!}
+  check Δ Γ (U-■E u u₁) t = {!!}
+  check [] Γ (U-CVar a σ) t = not-in-scope-C (λ Ψ ())
+  check ((Ψ , x) ∷ d) Γ (U-CVar zero σ) t with eqTy x t
+  check ((Ψ , x) ∷ d) Γ (U-CVar zero σ) t | inj₂ contra = Δ-type-mismatch Ψ x here contra
+  check ((Ψ , x) ∷ d) Γ (U-CVar zero σ) t | inj₁ refl = {!!}
+  check ((Ψ , x) ∷ d) Γ (U-CVar (suc a) σ) t = {!!}
+  check Δ [] (U-Var a) t = not-in-scope λ ()
+  check Δ (x ∷ xs) (U-Var a) t = {!!}
