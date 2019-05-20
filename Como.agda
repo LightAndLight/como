@@ -204,7 +204,7 @@ data Dec (A : Set) : Set where
 
 data U : Set where
   U-Var : ℕ → U
-  U-CVar : ℕ → U
+  U-CVar : ℕ → List U → U
 
   U-→I : Ty → U → U
   U-→E : U → U → U
@@ -216,21 +216,31 @@ data U : Set where
 ρ-U f zero = zero
 ρ-U f (suc x) = suc (f x)
 
-rename-U : (ℕ → ℕ) → U → U
-rename-U f (U-Var x) = U-Var (f x)
-rename-U f (U-CVar x) = U-CVar x
-rename-U f (U-→I x a) = U-→I x (rename-U (ρ-U f) a)
-rename-U f (U-→E a a₁) = U-→E (rename-U f a) (rename-U f a₁)
-rename-U f (U-■I a) = U-■I a
-rename-U f (U-■E a b) = U-■E (rename-U f a) (rename-U f b)
+mutual
+  rename-List : (ℕ → ℕ) → List U → List U
+  rename-List f [] = []
+  rename-List f (x ∷ xs) = rename-U f x ∷ rename-List f xs
 
-untag : ∀{Δ Γ ty} → Tm Δ Γ ty → U
-untag (Var x) = U-Var (toℕ x)
-untag (CVar x _) = U-CVar (toℕ x)
-untag (→I A t) = U-→I A (untag t)
-untag (→E t u) = U-→E (untag t) (untag u)
-untag (■I t) = U-■I (untag t)
-untag (■E t u) = U-■E (untag t) (untag u)
+  rename-U : (ℕ → ℕ) → U → U
+  rename-U f (U-Var x) = U-Var (f x)
+  rename-U f (U-CVar x y) = U-CVar x (rename-List f y)
+  rename-U f (U-→I x a) = U-→I x (rename-U (ρ-U f) a)
+  rename-U f (U-→E a a₁) = U-→E (rename-U f a) (rename-U f a₁)
+  rename-U f (U-■I a) = U-■I a
+  rename-U f (U-■E a b) = U-■E (rename-U f a) (rename-U f b)
+
+mutual
+  untag-All : ∀{Δ Γ xs} → All (Tm Δ Γ) xs → List U
+  untag-All All-nil = []
+  untag-All (All-cons x xs) = untag x ∷ untag-All xs
+
+  untag : ∀{Δ Γ ty} → Tm Δ Γ ty → U
+  untag (Var x) = U-Var (toℕ x)
+  untag (CVar x y) = U-CVar (toℕ x) (untag-All y)
+  untag (→I A t) = U-→I A (untag t)
+  untag (→E t u) = U-→E (untag t) (untag u)
+  untag (■I t) = U-■I (untag t)
+  untag (■E t u) = U-■E (untag t) (untag u)
 
 data Check (Δ : List (List Ty × Ty)) (Γ : List Ty) : U → Ty → Set where
   yes : ∀{u ty} → (tm : Tm Δ Γ ty) → untag tm ≡ u → Check Δ Γ u ty
@@ -239,9 +249,9 @@ data Check (Δ : List (List Ty × Ty)) (Γ : List Ty) : U → Ty → Set where
     ¬(Lookup n t Γ) →
     Check Δ Γ (U-Var n) t
   not-in-scope-C :
-    ∀{t n} →
+    ∀{t n σ} →
     ((Ψ : List Ty) → ¬(Lookup n (Ψ , t) Δ)) →
-    Check Δ Γ (U-CVar n) t
+    Check Δ Γ (U-CVar n σ) t
   Γ-type-mismatch :
     ∀{t n} →
     (u : Ty) →
@@ -249,28 +259,42 @@ data Check (Δ : List (List Ty × Ty)) (Γ : List Ty) : U → Ty → Set where
     ¬(u ≡ t) →
     Check Δ Γ (U-Var n) t
 
-untag-rename :
-  ∀{A} {Δ} {Γ Γ'} →
-  (f : ∀{x} → x ∈ Γ → x ∈ Γ') →
-  (g : ℕ → ℕ) →
-  (∀{x : Ty} → (p : x ∈ Γ) → toℕ (f p) ≡ g (toℕ p)) →
-  (tm : Tm Δ Γ A) →
-  untag (rename f tm) ≡ rename-U g (untag tm)
-untag-rename f g prf (Var x) = cong U-Var (prf x)
-untag-rename f g prf (CVar x x₁) = refl
-untag-rename f g prf (→I A tm) =
-  cong
-    (U-→I A)
-    (untag-rename (ρ f) (ρ-U g) (λ{ here → refl; (there p) → cong suc (prf p) }) tm)
-untag-rename f g prf (→E tm tm₁)
-  rewrite
-    untag-rename f g prf tm |
-    untag-rename f g prf tm₁ = refl
-untag-rename f g prf (■I tm) = refl
-untag-rename f g prf (■E tm tm₁)
-  rewrite
-    untag-rename f g prf tm |
-    untag-rename f g prf tm₁ = refl
+mutual
+  untag-rename-All :
+    ∀{xs} {Δ} {Γ Γ'} →
+    (f : ∀{x} → x ∈ Γ → x ∈ Γ') →
+    (g : ℕ → ℕ) →
+    (∀{x : Ty} → (p : x ∈ Γ) → toℕ (f p) ≡ g (toℕ p)) →
+    (tm : All (Tm Δ Γ) xs) →
+    untag-All (rename-All f tm) ≡ rename-List g (untag-All tm)
+  untag-rename-All f g prf All-nil = refl
+  untag-rename-All f g prf (All-cons x xs)
+    rewrite
+      untag-rename f g prf x |
+      untag-rename-All f g prf xs = refl
+
+  untag-rename :
+    ∀{A} {Δ} {Γ Γ'} →
+    (f : ∀{x} → x ∈ Γ → x ∈ Γ') →
+    (g : ℕ → ℕ) →
+    (∀{x : Ty} → (p : x ∈ Γ) → toℕ (f p) ≡ g (toℕ p)) →
+    (tm : Tm Δ Γ A) →
+    untag (rename f tm) ≡ rename-U g (untag tm)
+  untag-rename f g prf (Var x) = cong U-Var (prf x)
+  untag-rename f g prf (CVar x σ) = cong (U-CVar (toℕ x)) (untag-rename-All f g prf σ)
+  untag-rename f g prf (→I A tm) =
+    cong
+      (U-→I A)
+      (untag-rename (ρ f) (ρ-U g) (λ{ here → refl; (there p) → cong suc (prf p) }) tm)
+  untag-rename f g prf (→E tm tm₁)
+    rewrite
+      untag-rename f g prf tm |
+      untag-rename f g prf tm₁ = refl
+  untag-rename f g prf (■I tm) = refl
+  untag-rename f g prf (■E tm tm₁)
+    rewrite
+      untag-rename f g prf tm |
+      untag-rename f g prf tm₁ = refl
 
 untag-rename-there :
   ∀{A B u Δ Γ} →
@@ -278,7 +302,8 @@ untag-rename-there :
   untag tm ≡ u →
   untag (rename (there {_} {B}) tm) ≡ rename-U suc u
 untag-rename-there (Var x) refl = refl
-untag-rename-there (CVar x x₁) refl = refl
+untag-rename-there (CVar x x₁) refl =
+  cong (U-CVar (toℕ x)) (untag-rename-All there suc (λ p → refl) x₁)
 untag-rename-there (→I A tm) refl =
   cong
     (U-→I A)
@@ -325,19 +350,11 @@ eqTy (Box (x ∷ t) t₁) (Box (x ∷ u) u₁) | inj₁ refl | inj₁ refl = inj
 eqTy (Box (x ∷ t) t₁) (Box (x ∷ u) u₁) | inj₁ refl | inj₂ contra =
   inj₂ λ{ refl → contra refl }
 
-thing : ∀{x xs Γ} → (Ψ : List Ty) → All (Tm ((Ψ , x) ∷ xs) Γ) Ψ
-thing [] = All-nil
-thing (a ∷ as) = All-cons {!CVar here ?!} {!!}
-
 check : (Δ : List (List Ty × Ty)) → (Γ : List Ty) → (u : U) → (t : Ty) → Check Δ Γ u t
 check Δ Γ (U-→I x u) t = {!!}
 check Δ Γ (U-→E u u₁) t = {!!}
 check Δ Γ (U-■I u) t = {!!}
 check Δ Γ (U-■E u u₁) t = {!!}
-check [] Γ (U-CVar a) t = not-in-scope-C λ Ψ ()
-check ((Ψ , x) ∷ xs) Γ (U-CVar zero) t with eqTy x t
-check ((Ψ , x) ∷ xs) Γ (U-CVar zero) .x | inj₁ refl = yes (CVar here {!!}) refl
-check ((Ψ , x) ∷ xs) Γ (U-CVar zero) t | inj₂ contra = {!!}
-check (x ∷ xs) Γ (U-CVar (suc a)) t = {!weaken-Check (check xs Γ (U-CVar a) t)!}
+check Δ Γ (U-CVar a σ) t = {!!}
 check Δ [] (U-Var a) t = not-in-scope λ ()
 check Δ (x ∷ xs) (U-Var a) t = {!!}
