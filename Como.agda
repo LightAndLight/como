@@ -9,6 +9,9 @@ open import Data.Sum using (_⊎_; inj₁; inj₂)
 open import Relation.Nullary using (¬_)
 open import Relation.Binary.PropositionalEquality using (_≡_; refl; cong; sym)
 
+Dec : Set → Set
+Dec A = A ⊎ ¬ A
+
 data Ty : Set where
   Arr : Ty → Ty → Ty
   Box : List Ty → Ty → Ty
@@ -27,6 +30,13 @@ data _⊆_ {A : Set} : List A → List A → Set where
 data Lookup {A : Set} : ℕ → A → List A → Set where
   here : ∀{x xs} → Lookup zero x (x ∷ xs)
   there : ∀{n x y xs} → Lookup n x xs → Lookup (suc n) x (y ∷ xs)
+
+decLookup : ∀{A : Set} → (n : ℕ) → (xs : List A) → Dec (∃[ x ]( Lookup n x xs))
+decLookup n [] = inj₂ (λ{ (x , ()) })
+decLookup zero (x ∷ xs) = inj₁ (x , here)
+decLookup (suc n) (x ∷ xs) with decLookup n xs
+... | inj₁ (a , prf) = inj₁ (a , there prf)
+... | inj₂ contra = inj₂ (λ{ (a , there p) → contra (a , p) })
 
 toℕ : ∀{A : Set} {x : A} {xs} → x ∈ xs → ℕ
 toℕ here = zero
@@ -271,6 +281,18 @@ mutual
       (Lookup n (Ψ , u) Δ) →
       ¬(u ≡ t) →
       TypeError Δ Γ (U-CVar n σ) t
+    →I-arg-type-mismatch :
+      ∀{x b t u} →
+      ¬(x ≡ t) →
+      TypeError Δ Γ (U-→I x b) (Arr t u)
+    →I-body-type-mismatch :
+      ∀{x b t u} →
+      TypeError Δ (x ∷ Γ) b u →
+      TypeError Δ Γ (U-→I x b) (Arr t u)
+    expected-function :
+      ∀{t a b} →
+      (∀(x y : Ty) → ¬(t ≡ Arr x y)) →
+      TypeError Δ Γ (U-→I a b) t
     type-error-σ :
       ∀{n Ψ t σ} →
       Lookup n (Ψ , t) Δ →
@@ -412,6 +434,9 @@ mutual
     Δ-type-mismatch Ψ u lookup-u u¬≡ty
   weaken-TypeError (type-error-σ lookup-u err) =
     type-error-σ lookup-u (weaken-TypeError-σ err)
+  weaken-TypeError (expected-function a) = expected-function a
+  weaken-TypeError (→I-arg-type-mismatch a) = →I-arg-type-mismatch a
+  weaken-TypeError (→I-body-type-mismatch a) = {!!}
 
 weaken-Check : ∀{Γ u ty A} → Check [] Γ u ty → Check [] (A ∷ Γ) (rename-U suc u) ty
 weaken-Check (yes tm x) = yes (rename there tm) (untag-rename-there tm x)
@@ -437,8 +462,16 @@ eqTy (Box (x ∷ t) t₁) (Box (x ∷ u) u₁) | inj₁ refl | inj₁ refl = inj
 eqTy (Box (x ∷ t) t₁) (Box (x ∷ u) u₁) | inj₁ refl | inj₂ contra =
   inj₂ λ{ refl → contra refl }
 
-Dec : Set → Set
-Dec A = A ⊎ ¬ A
+Lookup-∈ : ∀{A : Set} {x : A} {n xs} → Lookup n x xs → x ∈ xs
+Lookup-∈ here = here
+Lookup-∈ (there p) = there (Lookup-∈ p)
+
+toℕ-Lookup-∈ :
+  ∀{A : Set} {a} {x : A} {xs} →
+  (prf : Lookup a x xs) →
+  toℕ (Lookup-∈ prf) ≡ a
+toℕ-Lookup-∈ {_} {_} {_} {_} here = refl
+toℕ-Lookup-∈ {_} {_} {_} {_} (there prf) = cong suc (toℕ-Lookup-∈ {_} {_} {_} {_} prf)
 
 mutual
   check-σ :
@@ -462,9 +495,31 @@ mutual
   ... | no err = no-σ (type-errors (⊆-cons-both u ⊆1) (⊆-cons-both t ⊆2) (All-cons err errs))
 
   check : (Δ : List (List Ty × Ty)) → (Γ : List Ty) → (u : U) → (t : Ty) → Check Δ Γ u t
-  check Δ Γ (U-→I x u) t = {!!}
-  check Δ Γ (U-→E u u₁) t = {!!}
-  check Δ Γ (U-■I u) t = {!!}
-  check Δ Γ (U-■E u u₁) t = {!!}
-  check Δ Γ (U-CVar a σ) t = {!!}
-  check Δ Γ (U-Var a) t = {!!}
+  check Δ Γ (U-→I x u) (Arr a b) with eqTy x a
+  check Δ Γ (U-→I x u) (Arr a b) | inj₂ contra = no (→I-arg-type-mismatch contra)
+  check Δ Γ (U-→I x u) (Arr a b) | inj₁ refl with check Δ (x ∷ Γ) u b
+  check Δ Γ (U-→I x u) (Arr x b) | inj₁ refl | no err = no {!!}
+  check Δ Γ (U-→I x u) (Arr x b) | inj₁ refl | yes tm refl = yes (→I x tm) refl
+  check Δ Γ (U-→I x u) (Box _ _) = no (expected-function (λ a b ()))
+  check Δ Γ (U-→E a b) t = {!!}
+  check Δ Γ (U-■I a) t = {!!}
+  check Δ Γ (U-■E a b) t = {!!}
+  check Δ Γ (U-CVar a σ) t with decLookup a Δ
+  check Δ Γ (U-CVar a σ) t | inj₁ ((Ψ , x) , prf) with eqTy x t
+  check Δ Γ (U-CVar a σ) t | inj₁ ((Ψ , x) , prf) | inj₂ contra =
+    no (Δ-type-mismatch Ψ x prf contra)
+  check Δ Γ (U-CVar a σ) t | inj₁ ((Ψ , x) , prf) | inj₁ refl with check-σ Δ Γ σ Ψ
+  check Δ Γ (U-CVar a σ) x | inj₁ ((Ψ , x) , prf) | inj₁ refl | yes-σ tms refl =
+    yes (CVar (Lookup-∈ prf) tms) (cong (λ l → U-CVar l (untag-All tms)) (toℕ-Lookup-∈ prf))
+  check Δ Γ (U-CVar a σ) x | inj₁ ((Ψ , x) , prf) | inj₁ refl | no-σ err =
+    no (type-error-σ prf err)
+  check Δ Γ (U-CVar a σ) t | inj₂ contra =
+    no (not-in-scope-C (λ Ψ z → contra ((Ψ , t) , z)))
+  check Δ Γ (U-Var a) t with decLookup a Γ
+  check Δ Γ (U-Var a) t | inj₁ (x , prf) with eqTy x t
+  check Δ Γ (U-Var a) t | inj₁ (x , prf) | inj₁ refl =
+    yes (Var (Lookup-∈ prf)) (cong U-Var (toℕ-Lookup-∈ prf))
+  check Δ Γ (U-Var a) t | inj₁ (x , prf) | inj₂ contra =
+    no (Γ-type-mismatch x prf contra)
+  check Δ Γ (U-Var a) t | inj₂ contra =
+    no (not-in-scope (λ z → contra (t , z)))
