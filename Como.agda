@@ -3,7 +3,7 @@ module Como where
 open import Function using (_∘_)
 open import Data.Nat using (ℕ; zero; suc)
 open import Data.Unit using (⊤)
-open import Data.List using (List; _∷_; []; _++_)
+open import Data.List using (List; _∷_; []; _++_; zip)
 open import Data.Product using (_×_; _,_; ∃-syntax; Σ-syntax)
 open import Data.Sum using (_⊎_; inj₁; inj₂)
 open import Relation.Nullary using (¬_)
@@ -17,6 +17,12 @@ infix 3 _∈_
 data _∈_ {A : Set} : A → List A → Set where
   here : ∀{x xs} → x ∈ x ∷ xs
   there : ∀{y x xs} → x ∈ xs → x ∈ y ∷ xs
+
+infix 3 _⊆_
+data _⊆_ {A : Set} : List A → List A → Set where
+  ⊆-nil : ∀{xs} → [] ⊆ xs
+  ⊆-cons-r : ∀{x ys xs} → ys ⊆ xs → ys ⊆ x ∷ xs
+  ⊆-cons-both : ∀{ys xs} → (x : A) → ys ⊆ xs → x ∷ ys ⊆ x ∷ xs
 
 data Lookup {A : Set} : ℕ → A → List A → Set where
   here : ∀{x xs} → Lookup zero x (x ∷ xs)
@@ -242,34 +248,52 @@ data _<_ {A B : Set} : List A → List B → Set where
   nil-< : ∀{x xs} → [] < (x ∷ xs)
   cons-< : ∀{x xs y ys} → xs < ys → (x ∷ xs) < (y ∷ ys)
 
+mutual
+  data TypeError (Δ : List (List Ty × Ty)) (Γ : List Ty) : U → Ty → Set where
+    not-in-scope :
+      ∀{t n} →
+      ¬(Lookup n t Γ) →
+      TypeError Δ Γ (U-Var n) t
+    not-in-scope-C :
+      ∀{t n σ} →
+      ((Ψ : List Ty) → ¬(Lookup n (Ψ , t) Δ)) →
+      TypeError Δ Γ (U-CVar n σ) t
+    Γ-type-mismatch :
+      ∀{t n} →
+      (u : Ty) →
+      (Lookup n u Γ) →
+      ¬(u ≡ t) →
+      TypeError Δ Γ (U-Var n) t
+    Δ-type-mismatch :
+      ∀{t n σ} →
+      (Ψ : List Ty) →
+      (u : Ty) →
+      (Lookup n (Ψ , u) Δ) →
+      ¬(u ≡ t) →
+      TypeError Δ Γ (U-CVar n σ) t
+    type-error-σ :
+      ∀{n Ψ t σ} →
+      Lookup n (Ψ , t) Δ →
+      TypeError-σ Δ Γ σ Ψ →
+      TypeError Δ Γ (U-CVar n σ) t
+
+  data TypeError-σ (Δ : List (List Ty × Ty)) (Γ : List Ty) : List U → List Ty → Set where
+    too-few-terms : ∀{us ts} → us < ts → TypeError-σ Δ Γ us ts
+    too-many-terms : ∀{us ts} → ts < us → TypeError-σ Δ Γ us ts
+    type-errors :
+      ∀{us us' ts ts'} →
+      us ⊆ us' →
+      ts ⊆ ts' →
+      All (λ{ (u , t) → TypeError Δ Γ u t}) (zip us ts) →
+      TypeError-σ Δ Γ us' ts'
+
 data Check-σ (Δ : List (List Ty × Ty)) (Γ : List Ty) : List U → List Ty → Set where
   yes-σ : ∀{us ts} → (xs : All (Tm Δ Γ) ts) → untag-All xs ≡ us → Check-σ Δ Γ us ts
-  too-few-terms : ∀{us ts} → us < ts → Check-σ Δ Γ us ts
-  too-many-terms : ∀{us ts} → ts < us → Check-σ Δ Γ us ts
+  no-σ : ∀{us ts} → TypeError-σ Δ Γ us ts → Check-σ Δ Γ us ts
 
 data Check (Δ : List (List Ty × Ty)) (Γ : List Ty) : U → Ty → Set where
   yes : ∀{u ty} → (tm : Tm Δ Γ ty) → untag tm ≡ u → Check Δ Γ u ty
-  not-in-scope :
-    ∀{t n} →
-    ¬(Lookup n t Γ) →
-    Check Δ Γ (U-Var n) t
-  not-in-scope-C :
-    ∀{t n σ} →
-    ((Ψ : List Ty) → ¬(Lookup n (Ψ , t) Δ)) →
-    Check Δ Γ (U-CVar n σ) t
-  Γ-type-mismatch :
-    ∀{t n} →
-    (u : Ty) →
-    (Lookup n u Γ) →
-    ¬(u ≡ t) →
-    Check Δ Γ (U-Var n) t
-  Δ-type-mismatch :
-    ∀{t n σ} →
-    (Ψ : List Ty) →
-    (u : Ty) →
-    (Lookup n (Ψ , u) Δ) →
-    ¬(u ≡ t) →
-    Check Δ Γ (U-CVar n σ) t
+  no : ∀{u t} → TypeError Δ Γ u t → Check Δ Γ u t
 
 mutual
   untag-rename-All :
@@ -332,17 +356,66 @@ untag-rename-there {_} {B} (■E tm tm₁) refl
     untag-rename (there {_} {B}) suc (λ p → refl) tm₁
     = refl
 
+rename-List-< :
+  ∀{f σ} {Ψ : List Ty} →
+  σ < Ψ →
+  rename-List f σ < Ψ
+rename-List-< nil-< = nil-<
+rename-List-< (cons-< a) = cons-< (rename-List-< a)
+
+<-rename-List :
+  ∀{f Ψ} {σ : List Ty} →
+  σ < Ψ →
+  σ < rename-List f Ψ
+<-rename-List nil-< = nil-<
+<-rename-List (cons-< p) = cons-< (<-rename-List p)
+
+⊆-rename-List :
+  ∀{f a b} →
+  a ⊆ b →
+  rename-List f a ⊆ rename-List f b
+⊆-rename-List ⊆-nil = ⊆-nil
+⊆-rename-List (⊆-cons-r p) = ⊆-cons-r (⊆-rename-List p)
+⊆-rename-List {f} (⊆-cons-both x p) = ⊆-cons-both (rename-U f x) (⊆-rename-List p)
+
+mutual
+  weaken-All :
+    ∀{us ts Γ A} →
+    All (λ{ (u , t) → TypeError [] Γ u t }) (zip us ts) →
+    All (λ{ (u , t) → TypeError [] (A ∷ Γ) u t }) (zip (rename-List suc us) ts)
+  weaken-All {[]} {[]} p = All-nil
+  weaken-All {[]} {x ∷ ts} p = All-nil
+  weaken-All {x ∷ us} {[]} p = All-nil
+  weaken-All {u ∷ us} {t ∷ ts} (All-cons x p) =
+    All-cons (weaken-TypeError x) (weaken-All {us} {ts} p)
+
+  weaken-TypeError-σ :
+    ∀{Γ σ Ψ A} →
+    TypeError-σ [] Γ σ Ψ →
+    TypeError-σ [] (A ∷ Γ) (rename-List suc σ) Ψ
+  weaken-TypeError-σ (too-few-terms x) = too-few-terms (rename-List-< x)
+  weaken-TypeError-σ (too-many-terms x) = too-many-terms (<-rename-List x)
+  weaken-TypeError-σ (type-errors ⊆1 ⊆2 errs) =
+    type-errors
+      (⊆-rename-List ⊆1)
+      ⊆2
+      (weaken-All errs)
+
+  weaken-TypeError : ∀{Γ u ty A} → TypeError [] Γ u ty → TypeError [] (A ∷ Γ) (rename-U suc u) ty
+  weaken-TypeError (not-in-scope ty-notin-Γ) =
+    not-in-scope λ{ (there p) → ty-notin-Γ p }
+  weaken-TypeError (not-in-scope-C ty-notin-Δ) =
+    not-in-scope-C (λ Ψ ())
+  weaken-TypeError (Γ-type-mismatch u lookup-u u¬≡ty) =
+    Γ-type-mismatch u (there lookup-u) u¬≡ty
+  weaken-TypeError (Δ-type-mismatch Ψ u lookup-u u¬≡ty) =
+    Δ-type-mismatch Ψ u lookup-u u¬≡ty
+  weaken-TypeError (type-error-σ lookup-u err) =
+    type-error-σ lookup-u (weaken-TypeError-σ err)
+
 weaken-Check : ∀{Γ u ty A} → Check [] Γ u ty → Check [] (A ∷ Γ) (rename-U suc u) ty
-weaken-Check (yes tm x) =
-  yes (rename there tm) (untag-rename-there tm x)
-weaken-Check (not-in-scope ty-notin-Γ) =
-  not-in-scope λ{ (there p) → ty-notin-Γ p }
-weaken-Check (not-in-scope-C ty-notin-Δ) =
-  not-in-scope-C (λ Ψ ())
-weaken-Check (Γ-type-mismatch u lookup-u u¬≡ty) =
-  Γ-type-mismatch u (there lookup-u) u¬≡ty
-weaken-Check (Δ-type-mismatch Ψ u lookup-u u¬≡ty) =
-  Δ-type-mismatch Ψ u lookup-u u¬≡ty
+weaken-Check (yes tm x) = yes (rename there tm) (untag-rename-there tm x)
+weaken-Check (no err) = no (weaken-TypeError err)
 
 eqTy : (t u : Ty) → t ≡ u ⊎ ¬(t ≡ u)
 eqTy (Arr t t₁) (Arr u u₁) with eqTy t u
@@ -367,7 +440,7 @@ eqTy (Box (x ∷ t) t₁) (Box (x ∷ u) u₁) | inj₁ refl | inj₂ contra =
 Dec : Set → Set
 Dec A = A ⊎ ¬ A
 
-mutual 
+mutual
   check-σ :
     (Δ : List (List Ty × Ty)) →
     (Γ : List Ty) →
@@ -375,22 +448,23 @@ mutual
     (ts : List Ty) →
     Check-σ Δ Γ us ts
   check-σ Δ Γ [] [] = yes-σ All-nil refl
-  check-σ Δ Γ [] (x ∷ ts) = too-few-terms nil-<
-  check-σ Δ Γ (x ∷ us) [] = too-many-terms nil-<
+  check-σ Δ Γ [] (x ∷ ts) = no-σ (too-few-terms nil-<)
+  check-σ Δ Γ (x ∷ us) [] = no-σ (too-many-terms nil-<)
   check-σ Δ Γ (u ∷ us) (t ∷ ts) with check-σ Δ Γ us ts
-  check-σ Δ Γ (u ∷ us) (t ∷ ts) | yes-σ tms x = {!!}
-  check-σ Δ Γ (u ∷ us) (t ∷ ts) | too-few-terms x = {!!}
-  check-σ Δ Γ (u ∷ us) (t ∷ ts) | too-many-terms x = {!!}
+  check-σ Δ Γ (u ∷ us) (t ∷ ts) | yes-σ tms refl with check Δ Γ u t
+  ... | yes tm refl = yes-σ (All-cons tm tms) refl
+  ... | no err =
+    no-σ (type-errors (⊆-cons-both u ⊆-nil) (⊆-cons-both t ⊆-nil) (All-cons err All-nil))
+  check-σ Δ Γ (u ∷ us) (t ∷ ts) | no-σ (too-few-terms x) = no-σ (too-few-terms (cons-< x))
+  check-σ Δ Γ (u ∷ us) (t ∷ ts) | no-σ (too-many-terms x) = no-σ (too-many-terms (cons-< x))
+  check-σ Δ Γ (u ∷ us) (t ∷ ts) | no-σ (type-errors ⊆1 ⊆2 errs) with check Δ Γ u t
+  ... | yes _ _ = no-σ (type-errors (⊆-cons-r ⊆1) (⊆-cons-r ⊆2) errs)
+  ... | no err = no-σ (type-errors (⊆-cons-both u ⊆1) (⊆-cons-both t ⊆2) (All-cons err errs))
 
   check : (Δ : List (List Ty × Ty)) → (Γ : List Ty) → (u : U) → (t : Ty) → Check Δ Γ u t
   check Δ Γ (U-→I x u) t = {!!}
   check Δ Γ (U-→E u u₁) t = {!!}
   check Δ Γ (U-■I u) t = {!!}
   check Δ Γ (U-■E u u₁) t = {!!}
-  check [] Γ (U-CVar a σ) t = not-in-scope-C (λ Ψ ())
-  check ((Ψ , x) ∷ d) Γ (U-CVar zero σ) t with eqTy x t
-  check ((Ψ , x) ∷ d) Γ (U-CVar zero σ) t | inj₂ contra = Δ-type-mismatch Ψ x here contra
-  check ((Ψ , x) ∷ d) Γ (U-CVar zero σ) t | inj₁ refl = {!!}
-  check ((Ψ , x) ∷ d) Γ (U-CVar (suc a) σ) t = {!!}
-  check Δ [] (U-Var a) t = not-in-scope λ ()
-  check Δ (x ∷ xs) (U-Var a) t = {!!}
+  check Δ Γ (U-CVar a σ) t = {!!}
+  check Δ Γ (U-Var a) t = {!!}
