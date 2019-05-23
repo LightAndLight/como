@@ -1,20 +1,55 @@
 module Como where
 
 open import Function using (_∘_)
+open import Data.Bool using (Bool; true; false; _∧_)
+open import Data.Empty using (⊥)
 open import Data.Nat using (ℕ; zero; suc)
 open import Data.Unit using (⊤)
-open import Data.List using (List; _∷_; []; _++_; zip)
-open import Data.Product using (_×_; _,_; ∃-syntax; Σ-syntax)
+open import Data.List using (List; _∷_; []; _++_; zip; boolFilter; any)
+open import Data.Product using (_×_; _,_; ∃-syntax; Σ-syntax; proj₂)
 open import Data.Sum using (_⊎_; inj₁; inj₂)
-open import Relation.Nullary using (¬_)
+open import Relation.Nullary using (¬_; Dec; yes; no)
 open import Relation.Binary.PropositionalEquality using (_≡_; refl; cong; sym)
-
-Dec : Set → Set
-Dec A = A ⊎ ¬ A
 
 data Ty : Set where
   Arr : Ty → Ty → Ty
   Box : List Ty → Ty → Ty
+
+data Not-Arrow : Ty → Set where
+  ■-Not-Arrow : ∀{A B} → Not-Arrow (Box A B)
+
+Not-Arrow-correct : ∀{a} → Not-Arrow a → (x y : Ty) → ¬(a ≡ Arr x y)
+Not-Arrow-correct ■-Not-Arrow x y ()
+
+data Not-Box : Ty → Set where
+  →-Not-Box : ∀{A B} → Not-Box (Arr A B)
+
+Not-Box-correct : ∀{a} → Not-Box a → (x : List Ty) → (y : Ty) → ¬(a ≡ Box x y)
+Not-Box-correct →-Not-Box x y ()
+
+isYes : ∀{P : Set} → Dec P → Bool
+isYes (yes _) = true
+isYes (no _) = false
+
+eqTy : (t u : Ty) → Dec (t ≡ u)
+eqTy (Arr t t₁) (Arr u u₁) with eqTy t u
+eqTy (Arr t t₁) (Arr .t u₁) | yes refl with eqTy t₁ u₁
+eqTy (Arr t t₁) (Arr .t .t₁) | yes refl | yes refl = yes refl
+eqTy (Arr t t₁) (Arr .t u₁) | yes refl | no contra = no λ{ refl → contra refl }
+eqTy (Arr t t₁) (Arr u u₁) | no contra = no λ{ refl → contra refl }
+eqTy (Arr t t₁) (Box u u₁) = no (λ ())
+eqTy (Box t t₁) (Arr u u₁) = no (λ ())
+eqTy (Box [] t₁) (Box [] u₁) with eqTy t₁ u₁
+eqTy (Box [] t₁) (Box [] .t₁) | yes refl = yes refl
+eqTy (Box [] t₁) (Box [] u₁) | no contra = no λ{ refl → contra refl }
+eqTy (Box [] t₁) (Box (x ∷ u) u₁) = no (λ ())
+eqTy (Box (x ∷ t) t₁) (Box [] u₁) = no (λ ())
+eqTy (Box (x ∷ t) t₁) (Box (x₁ ∷ u) u₁) with eqTy x x₁
+eqTy (Box (x ∷ t) t₁) (Box (x₁ ∷ u) u₁) | no contra = no λ{ refl → contra refl }
+eqTy (Box (x ∷ t) t₁) (Box (x₁ ∷ u) u₁) | yes refl with eqTy (Box t t₁) (Box u u₁)
+eqTy (Box (x ∷ t) t₁) (Box (x ∷ u) u₁) | yes refl | yes refl = yes refl
+eqTy (Box (x ∷ t) t₁) (Box (x ∷ u) u₁) | yes refl | no contra =
+  no λ{ refl → contra refl }
 
 infix 3 _∈_
 data _∈_ {A : Set} : A → List A → Set where
@@ -32,11 +67,11 @@ data Lookup {A : Set} : ℕ → A → List A → Set where
   there : ∀{n x y xs} → Lookup n x xs → Lookup (suc n) x (y ∷ xs)
 
 decLookup : ∀{A : Set} → (n : ℕ) → (xs : List A) → Dec (∃[ x ]( Lookup n x xs))
-decLookup n [] = inj₂ (λ{ (x , ()) })
-decLookup zero (x ∷ xs) = inj₁ (x , here)
+decLookup n [] = no (λ{ (x , ()) })
+decLookup zero (x ∷ xs) = yes (x , here)
 decLookup (suc n) (x ∷ xs) with decLookup n xs
-... | inj₁ (a , prf) = inj₁ (a , there prf)
-... | inj₂ contra = inj₂ (λ{ (a , there p) → contra (a , p) })
+... | yes (a , prf) = yes (a , there prf)
+... | no contra = no (λ{ (a , there p) → contra (a , p) })
 
 toℕ : ∀{A : Set} {x : A} {xs} → x ∈ xs → ℕ
 toℕ here = zero
@@ -68,7 +103,7 @@ data Tm : List (List Ty × Ty) → List Ty → Ty → Set where
   →I : ∀{B Δ Γ} → (A : Ty) → Tm Δ (A ∷ Γ) B → Tm Δ Γ (Arr A B)
   →E : ∀{A B Δ Γ} → Tm Δ Γ (Arr A B) → Tm Δ Γ A → Tm Δ Γ B
 
-  ■I : ∀{A Δ Ψ Γ} → Tm Δ Ψ A → Tm Δ Γ (Box Ψ A)
+  ■I : ∀{A Δ Γ} → (Ψ : List Ty) → Tm Δ Ψ A → Tm Δ Γ (Box Ψ A)
   ■E : ∀{A B Δ Ψ Γ} → Tm Δ Γ (Box Ψ A) → Tm ((Ψ , A) ∷ Δ) Γ B → Tm Δ Γ B
 
 ρ :
@@ -94,7 +129,7 @@ mutual
   rename f (CVar x prf) = CVar x (rename-All f prf)
   rename f (→I ty a) = →I ty (rename (ρ f) a)
   rename f (→E a a₁) = →E (rename f a) (rename f a₁)
-  rename f (■I a) = ■I a
+  rename f (■I Ψ a) = ■I Ψ a
   rename f (■E a a₁) = ■E (rename f a) (rename f a₁)
 
 mutual
@@ -107,7 +142,7 @@ mutual
   rename-C f (CVar x prf) = CVar (f x) (rename-C-All f prf)
   rename-C f (→I ty a) = →I ty (rename-C f a)
   rename-C f (→E a a₁) = →E (rename-C f a) (rename-C f a₁)
-  rename-C f (■I a) = ■I (rename-C f a)
+  rename-C f (■I Ψ a) = ■I Ψ (rename-C f a)
   rename-C f (■E a a₁) = ■E (rename-C f a) (rename-C (ρ f) a₁)
 
 context-identity : ∀{Δ Ψ} → All (Tm Δ Ψ) Ψ
@@ -143,7 +178,7 @@ mutual
   subst-C f (CVar x prf) = upgrade (f x) (subst-C-All f prf)
   subst-C f (→I ty a) = →I ty (subst-C f a)
   subst-C f (→E a a₁) = →E (subst-C f a) (subst-C f a₁)
-  subst-C f (■I a) = ■I (subst-C f a)
+  subst-C f (■I Ψ a) = ■I Ψ (subst-C f a)
   subst-C f (■E a a₁) = ■E (subst-C f a) (subst-C (σ-C f) a₁)
 
 σ :
@@ -166,13 +201,13 @@ mutual
   subst f (CVar x x₁) = CVar x (subst-All f x₁)
   subst f (→I ty a) = →I ty (subst (σ f) a)
   subst f (→E a a₁) = →E (subst f a) (subst f a₁)
-  subst f (■I a) = ■I a
+  subst f (■I Ψ a) = ■I Ψ a
   subst f (■E a a₁) = ■E (subst f a) (subst (rename-C there ∘ f) a₁)
 
 
 data Value {Δ} {Γ} : ∀{A} → Tm Δ Γ A → Set where
   v-→I : ∀{B} → (A : Ty) → (a : Tm Δ (A ∷ Γ) B) → Value (→I A a)
-  v-■I : ∀{A Ψ} {a : Tm Δ Ψ A} → Value (■I a)
+  v-■I : ∀{A Ψ} {a : Tm Δ Ψ A} → Value (■I Ψ a)
 
 data _↓_ {Δ Γ} : ∀{A} → Tm Δ Γ A → Tm Δ Γ A → Set where
   ↓-→E₁ :
@@ -194,7 +229,7 @@ data _↓_ {Δ Γ} : ∀{A} → Tm Δ Γ A → Tm Δ Γ A → Set where
     ■E a b ↓ ■E a' b
   ↓-unbox :
     ∀{A B Ψ} {a} {b : Tm ((Ψ , A) ∷ Δ) Γ B} →
-    ■E (■I a) b ↓ subst-C (λ { here → a; (there p) → CVar p context-identity }) b
+    ■E (■I Ψ a) b ↓ subst-C (λ { here → a; (there p) → CVar p context-identity }) b
 
 value-¬↓ : ∀{Δ Γ A} {tm : Tm Δ Γ A} → (v : Value tm) → ¬( ∃[ tm' ]( tm ↓ tm' ))
 value-¬↓ (v-→I _ _) (tm' , ())
@@ -209,10 +244,10 @@ progress (→E a b) | inj₂ (a' , a↓a') = inj₂ (→E a' b , ↓-→E₁ a�
 progress (→E a b) | inj₁ va with progress b
 progress (→E a b) | inj₁ va | inj₂ (b' , b↓b') = inj₂ (→E a b' , ↓-→E₂ va b↓b')
 progress (→E (→I ty e) b) | inj₁ (v-→I .ty .e) | inj₁ vb = inj₂ (_ , ↓-β vb)
-progress (■I tm) = inj₁ v-■I
+progress (■I Ψ tm) = inj₁ v-■I
 progress (■E tm tm₁) with progress tm
 progress (■E tm tm₁) | inj₂ (tm' , tm↓tm') = inj₂ (■E tm' tm₁ , ↓-■E₁ tm↓tm')
-progress (■E (■I a) tm₁) | inj₁ v-■I = inj₂ (_ , ↓-unbox)
+progress (■E (■I Ψ a) tm₁) | inj₁ v-■I = inj₂ (_ , ↓-unbox)
 
 data U : Set where
   U-Var : ℕ → U
@@ -221,7 +256,7 @@ data U : Set where
   U-→I : Ty → U → U
   U-→E : U → U → U
 
-  U-■I : U → U
+  U-■I : List Ty → U → U
   U-■E : U → U → U
 
 ρ-U : (ℕ → ℕ) → (ℕ → ℕ)
@@ -238,7 +273,7 @@ mutual
   rename-U f (U-CVar x y) = U-CVar x (rename-List f y)
   rename-U f (U-→I x a) = U-→I x (rename-U (ρ-U f) a)
   rename-U f (U-→E a a₁) = U-→E (rename-U f a) (rename-U f a₁)
-  rename-U f (U-■I a) = U-■I a
+  rename-U f (U-■I Ψ a) = U-■I Ψ a
   rename-U f (U-■E a b) = U-■E (rename-U f a) (rename-U f b)
 
 mutual
@@ -251,7 +286,7 @@ mutual
   untag (CVar x y) = U-CVar (toℕ x) (untag-All y)
   untag (→I A t) = U-→I A (untag t)
   untag (→E t u) = U-→E (untag t) (untag u)
-  untag (■I t) = U-■I (untag t)
+  untag (■I Ψ t) = U-■I Ψ (untag t)
   untag (■E t u) = U-■E (untag t) (untag u)
 
 data _<_ {A B : Set} : List A → List B → Set where
@@ -259,63 +294,88 @@ data _<_ {A B : Set} : List A → List B → Set where
   cons-< : ∀{x xs y ys} → xs < ys → (x ∷ xs) < (y ∷ ys)
 
 mutual
-  data TypeError (Δ : List (List Ty × Ty)) (Γ : List Ty) : U → Ty → Set where
+  data CheckError (Δ : List (List Ty × Ty)) (Γ : List Ty) : U → Ty → Set where
+    infer-error :
+      ∀{u t} →
+      InferError Δ Γ u →
+      CheckError Δ Γ u t
+    type-mismatch :
+      ∀{t} →
+      (t' : Ty) →
+      (tm : Tm Δ Γ t') →
+      ¬(t ≡ t') →
+      CheckError Δ Γ (untag tm) t
+
+  data InferError (Δ : List (List Ty × Ty)) (Γ : List Ty) : U → Set where
     not-in-scope :
-      ∀{t n} →
-      ¬(Lookup n t Γ) →
-      TypeError Δ Γ (U-Var n) t
+      ∀{n} →
+      ¬(Σ[ t ∈ Ty ](Lookup n t Γ)) →
+      InferError Δ Γ (U-Var n)
     not-in-scope-C :
-      ∀{t n σ} →
-      ((Ψ : List Ty) → ¬(Lookup n (Ψ , t) Δ)) →
-      TypeError Δ Γ (U-CVar n σ) t
-    Γ-type-mismatch :
-      ∀{t n} →
-      (u : Ty) →
-      (Lookup n u Γ) →
-      ¬(u ≡ t) →
-      TypeError Δ Γ (U-Var n) t
-    Δ-type-mismatch :
-      ∀{t n σ} →
-      (Ψ : List Ty) →
-      (u : Ty) →
-      (Lookup n (Ψ , u) Δ) →
-      ¬(u ≡ t) →
-      TypeError Δ Γ (U-CVar n σ) t
-    →I-arg-type-mismatch :
-      ∀{x b t u} →
-      ¬(x ≡ t) →
-      TypeError Δ Γ (U-→I x b) (Arr t u)
-    →I-body-type-mismatch :
-      ∀{x b t u} →
-      TypeError Δ (x ∷ Γ) b u →
-      TypeError Δ Γ (U-→I x b) (Arr t u)
+      ∀{n σ} →
+      ¬(Σ[ t ∈ List Ty × Ty ](Lookup n t Δ)) →
+      InferError Δ Γ (U-CVar n σ)
+    →I-body-error :
+      ∀{x b} →
+      InferError Δ (x ∷ Γ) b →
+      InferError Δ Γ (U-→I x b)
+    →E-left-error :
+      ∀{f x} →
+      InferError Δ Γ f →
+      InferError Δ Γ (U-→E f x)
+    →E-right-error :
+      ∀{f x t} →
+      CheckError Δ Γ x t →
+      InferError Δ Γ (U-→E f x)
+    ■I-error :
+      ∀{Ψ x} →
+      InferError Δ Ψ x →
+      InferError Δ Γ (U-■I Ψ x)
+    ■E-left-error :
+      ∀{x y} →
+      InferError Δ Γ x →
+      InferError Δ Γ (U-■E x y)
+    ■E-right-error :
+      ∀{a b x Ψ t} →
+      InferError ((Ψ , t) ∷ Δ) Γ x →
+      InferError Δ Γ (U-■E a b)
     expected-function :
-      ∀{t a b} →
-      (∀(x y : Ty) → ¬(t ≡ Arr x y)) →
-      TypeError Δ Γ (U-→I a b) t
+      ∀{t x} →
+      (tm : Tm Δ Γ t) →
+      Not-Arrow t →
+      InferError Δ Γ (U-→E (untag tm) x)
+    expected-box :
+      ∀{t x} →
+      (tm : Tm Δ Γ t) →
+      Not-Box t →
+      InferError Δ Γ (U-■E (untag tm) x)
     type-error-σ :
       ∀{n Ψ t σ} →
       Lookup n (Ψ , t) Δ →
-      TypeError-σ Δ Γ σ Ψ →
-      TypeError Δ Γ (U-CVar n σ) t
+      CheckError-σ Δ Γ σ Ψ →
+      InferError Δ Γ (U-CVar n σ)
 
-  data TypeError-σ (Δ : List (List Ty × Ty)) (Γ : List Ty) : List U → List Ty → Set where
-    too-few-terms : ∀{us ts} → us < ts → TypeError-σ Δ Γ us ts
-    too-many-terms : ∀{us ts} → ts < us → TypeError-σ Δ Γ us ts
+  data CheckError-σ (Δ : List (List Ty × Ty)) (Γ : List Ty) : List U → List Ty → Set where
+    too-few-terms : ∀{us ts} → us < ts → CheckError-σ Δ Γ us ts
+    too-many-terms : ∀{us ts} → ts < us → CheckError-σ Δ Γ us ts
     type-errors :
       ∀{us us' ts ts'} →
       us ⊆ us' →
       ts ⊆ ts' →
-      All (λ{ (u , t) → TypeError Δ Γ u t}) (zip us ts) →
-      TypeError-σ Δ Γ us' ts'
+      All (λ{ (u , t) → CheckError Δ Γ u t}) (zip us ts) →
+      CheckError-σ Δ Γ us' ts'
 
 data Check-σ (Δ : List (List Ty × Ty)) (Γ : List Ty) : List U → List Ty → Set where
   yes-σ : ∀{us ts} → (xs : All (Tm Δ Γ) ts) → untag-All xs ≡ us → Check-σ Δ Γ us ts
-  no-σ : ∀{us ts} → TypeError-σ Δ Γ us ts → Check-σ Δ Γ us ts
+  no-σ : ∀{us ts} → CheckError-σ Δ Γ us ts → Check-σ Δ Γ us ts
 
 data Check (Δ : List (List Ty × Ty)) (Γ : List Ty) : U → Ty → Set where
   yes : ∀{u ty} → (tm : Tm Δ Γ ty) → untag tm ≡ u → Check Δ Γ u ty
-  no : ∀{u t} → TypeError Δ Γ u t → Check Δ Γ u t
+  no : ∀{u t} → CheckError Δ Γ u t → Check Δ Γ u t
+
+data Infer (Δ : List (List Ty × Ty)) (Γ : List Ty) : U → Set where
+  yes : ∀{u} → (ty : Ty) → (tm : Tm Δ Γ ty) → untag tm ≡ u → Infer Δ Γ u
+  no : ∀{u} → InferError Δ Γ u → Infer Δ Γ u
 
 mutual
   untag-rename-All :
@@ -348,7 +408,7 @@ mutual
     rewrite
       untag-rename f g prf tm |
       untag-rename f g prf tm₁ = refl
-  untag-rename f g prf (■I tm) = refl
+  untag-rename f g prf (■I Ψ tm) = refl
   untag-rename f g prf (■E tm tm₁)
     rewrite
       untag-rename f g prf tm |
@@ -371,96 +431,12 @@ untag-rename-there {_} {B} (→E tm tm₁) refl
     untag-rename (there {_} {B}) suc (λ p → refl) tm₁ |
     untag-rename (there {_} {B}) suc (λ p → refl) tm
     = refl
-untag-rename-there (■I tm) refl = refl
+untag-rename-there (■I Ψ tm) refl = refl
 untag-rename-there {_} {B} (■E tm tm₁) refl
   rewrite
     untag-rename (there {_} {B}) suc (λ p → refl) tm |
     untag-rename (there {_} {B}) suc (λ p → refl) tm₁
     = refl
-
-rename-List-< :
-  ∀{f σ} {Ψ : List Ty} →
-  σ < Ψ →
-  rename-List f σ < Ψ
-rename-List-< nil-< = nil-<
-rename-List-< (cons-< a) = cons-< (rename-List-< a)
-
-<-rename-List :
-  ∀{f Ψ} {σ : List Ty} →
-  σ < Ψ →
-  σ < rename-List f Ψ
-<-rename-List nil-< = nil-<
-<-rename-List (cons-< p) = cons-< (<-rename-List p)
-
-⊆-rename-List :
-  ∀{f a b} →
-  a ⊆ b →
-  rename-List f a ⊆ rename-List f b
-⊆-rename-List ⊆-nil = ⊆-nil
-⊆-rename-List (⊆-cons-r p) = ⊆-cons-r (⊆-rename-List p)
-⊆-rename-List {f} (⊆-cons-both x p) = ⊆-cons-both (rename-U f x) (⊆-rename-List p)
-
-mutual
-  weaken-All :
-    ∀{us ts Γ A} →
-    All (λ{ (u , t) → TypeError [] Γ u t }) (zip us ts) →
-    All (λ{ (u , t) → TypeError [] (A ∷ Γ) u t }) (zip (rename-List suc us) ts)
-  weaken-All {[]} {[]} p = All-nil
-  weaken-All {[]} {x ∷ ts} p = All-nil
-  weaken-All {x ∷ us} {[]} p = All-nil
-  weaken-All {u ∷ us} {t ∷ ts} (All-cons x p) =
-    All-cons (weaken-TypeError x) (weaken-All {us} {ts} p)
-
-  weaken-TypeError-σ :
-    ∀{Γ σ Ψ A} →
-    TypeError-σ [] Γ σ Ψ →
-    TypeError-σ [] (A ∷ Γ) (rename-List suc σ) Ψ
-  weaken-TypeError-σ (too-few-terms x) = too-few-terms (rename-List-< x)
-  weaken-TypeError-σ (too-many-terms x) = too-many-terms (<-rename-List x)
-  weaken-TypeError-σ (type-errors ⊆1 ⊆2 errs) =
-    type-errors
-      (⊆-rename-List ⊆1)
-      ⊆2
-      (weaken-All errs)
-
-  weaken-TypeError : ∀{Γ u ty A} → TypeError [] Γ u ty → TypeError [] (A ∷ Γ) (rename-U suc u) ty
-  weaken-TypeError (not-in-scope ty-notin-Γ) =
-    not-in-scope λ{ (there p) → ty-notin-Γ p }
-  weaken-TypeError (not-in-scope-C ty-notin-Δ) =
-    not-in-scope-C (λ Ψ ())
-  weaken-TypeError (Γ-type-mismatch u lookup-u u¬≡ty) =
-    Γ-type-mismatch u (there lookup-u) u¬≡ty
-  weaken-TypeError (Δ-type-mismatch Ψ u lookup-u u¬≡ty) =
-    Δ-type-mismatch Ψ u lookup-u u¬≡ty
-  weaken-TypeError (type-error-σ lookup-u err) =
-    type-error-σ lookup-u (weaken-TypeError-σ err)
-  weaken-TypeError (expected-function a) = expected-function a
-  weaken-TypeError (→I-arg-type-mismatch a) = →I-arg-type-mismatch a
-  weaken-TypeError (→I-body-type-mismatch a) = {!!}
-
-weaken-Check : ∀{Γ u ty A} → Check [] Γ u ty → Check [] (A ∷ Γ) (rename-U suc u) ty
-weaken-Check (yes tm x) = yes (rename there tm) (untag-rename-there tm x)
-weaken-Check (no err) = no (weaken-TypeError err)
-
-eqTy : (t u : Ty) → t ≡ u ⊎ ¬(t ≡ u)
-eqTy (Arr t t₁) (Arr u u₁) with eqTy t u
-eqTy (Arr t t₁) (Arr .t u₁) | inj₁ refl with eqTy t₁ u₁
-eqTy (Arr t t₁) (Arr .t .t₁) | inj₁ refl | inj₁ refl = inj₁ refl
-eqTy (Arr t t₁) (Arr .t u₁) | inj₁ refl | inj₂ contra = inj₂ λ{ refl → contra refl }
-eqTy (Arr t t₁) (Arr u u₁) | inj₂ contra = inj₂ λ{ refl → contra refl }
-eqTy (Arr t t₁) (Box u u₁) = inj₂ (λ ())
-eqTy (Box t t₁) (Arr u u₁) = inj₂ (λ ())
-eqTy (Box [] t₁) (Box [] u₁) with eqTy t₁ u₁
-eqTy (Box [] t₁) (Box [] .t₁) | inj₁ refl = inj₁ refl
-eqTy (Box [] t₁) (Box [] u₁) | inj₂ contra = inj₂ λ{ refl → contra refl }
-eqTy (Box [] t₁) (Box (x ∷ u) u₁) = inj₂ (λ ())
-eqTy (Box (x ∷ t) t₁) (Box [] u₁) = inj₂ (λ ())
-eqTy (Box (x ∷ t) t₁) (Box (x₁ ∷ u) u₁) with eqTy x x₁
-eqTy (Box (x ∷ t) t₁) (Box (x₁ ∷ u) u₁) | inj₂ contra = inj₂ λ{ refl → contra refl }
-eqTy (Box (x ∷ t) t₁) (Box (x₁ ∷ u) u₁) | inj₁ refl with eqTy (Box t t₁) (Box u u₁)
-eqTy (Box (x ∷ t) t₁) (Box (x ∷ u) u₁) | inj₁ refl | inj₁ refl = inj₁ refl
-eqTy (Box (x ∷ t) t₁) (Box (x ∷ u) u₁) | inj₁ refl | inj₂ contra =
-  inj₂ λ{ refl → contra refl }
 
 Lookup-∈ : ∀{A : Set} {x : A} {n xs} → Lookup n x xs → x ∈ xs
 Lookup-∈ here = here
@@ -495,31 +471,39 @@ mutual
   ... | no err = no-σ (type-errors (⊆-cons-both u ⊆1) (⊆-cons-both t ⊆2) (All-cons err errs))
 
   check : (Δ : List (List Ty × Ty)) → (Γ : List Ty) → (u : U) → (t : Ty) → Check Δ Γ u t
-  check Δ Γ (U-→I x u) (Arr a b) with eqTy x a
-  check Δ Γ (U-→I x u) (Arr a b) | inj₂ contra = no (→I-arg-type-mismatch contra)
-  check Δ Γ (U-→I x u) (Arr a b) | inj₁ refl with check Δ (x ∷ Γ) u b
-  check Δ Γ (U-→I x u) (Arr x b) | inj₁ refl | no err = no {!!}
-  check Δ Γ (U-→I x u) (Arr x b) | inj₁ refl | yes tm refl = yes (→I x tm) refl
-  check Δ Γ (U-→I x u) (Box _ _) = no (expected-function (λ a b ()))
-  check Δ Γ (U-→E a b) t = {!!}
-  check Δ Γ (U-■I a) t = {!!}
-  check Δ Γ (U-■E a b) t = {!!}
-  check Δ Γ (U-CVar a σ) t with decLookup a Δ
-  check Δ Γ (U-CVar a σ) t | inj₁ ((Ψ , x) , prf) with eqTy x t
-  check Δ Γ (U-CVar a σ) t | inj₁ ((Ψ , x) , prf) | inj₂ contra =
-    no (Δ-type-mismatch Ψ x prf contra)
-  check Δ Γ (U-CVar a σ) t | inj₁ ((Ψ , x) , prf) | inj₁ refl with check-σ Δ Γ σ Ψ
-  check Δ Γ (U-CVar a σ) x | inj₁ ((Ψ , x) , prf) | inj₁ refl | yes-σ tms refl =
-    yes (CVar (Lookup-∈ prf) tms) (cong (λ l → U-CVar l (untag-All tms)) (toℕ-Lookup-∈ prf))
-  check Δ Γ (U-CVar a σ) x | inj₁ ((Ψ , x) , prf) | inj₁ refl | no-σ err =
-    no (type-error-σ prf err)
-  check Δ Γ (U-CVar a σ) t | inj₂ contra =
-    no (not-in-scope-C (λ Ψ z → contra ((Ψ , t) , z)))
-  check Δ Γ (U-Var a) t with decLookup a Γ
-  check Δ Γ (U-Var a) t | inj₁ (x , prf) with eqTy x t
-  check Δ Γ (U-Var a) t | inj₁ (x , prf) | inj₁ refl =
-    yes (Var (Lookup-∈ prf)) (cong U-Var (toℕ-Lookup-∈ prf))
-  check Δ Γ (U-Var a) t | inj₁ (x , prf) | inj₂ contra =
-    no (Γ-type-mismatch x prf contra)
-  check Δ Γ (U-Var a) t | inj₂ contra =
-    no (not-in-scope (λ z → contra (t , z)))
+  check Δ Γ tm ty with infer Δ Γ tm
+  check Δ Γ tm ty | yes ty' tm' refl with eqTy ty ty'
+  check Δ Γ _ ty | yes ty' tm' refl | yes refl = yes tm' refl
+  check Δ Γ _ ty | yes ty' tm' refl | no contra = no (type-mismatch ty' tm' contra)
+  check Δ Γ tm ty | no err = no (infer-error err)
+
+  infer : (Δ : List (List Ty × Ty)) → (Γ : List Ty) → (u : U) → Infer Δ Γ u
+  infer Δ Γ (U-Var n) with decLookup n Γ
+  infer Δ Γ (U-Var n) | yes (t , prf) =
+    yes t (Var (Lookup-∈ prf)) (cong U-Var (toℕ-Lookup-∈ prf))
+  infer Δ Γ (U-Var n) | no contra = no (not-in-scope contra)
+  infer Δ Γ (U-CVar n σ) with decLookup n Δ
+  infer Δ Γ (U-CVar n σ) | yes ((Ψ , t) , prf) with check-σ Δ Γ σ Ψ
+  infer Δ Γ (U-CVar n σ) | yes ((Ψ , t) , prf) | yes-σ tms refl =
+    yes t (CVar (Lookup-∈ prf) tms) (cong (λ x → U-CVar x (untag-All tms)) (toℕ-Lookup-∈ prf))
+  infer Δ Γ (U-CVar n σ) | yes ((Ψ , t) , prf) | no-σ x = no (type-error-σ prf x)
+  infer Δ Γ (U-CVar n σ) | no contra = no (not-in-scope-C contra)
+  infer Δ Γ (U-→I x u) with infer Δ (x ∷ Γ) u
+  infer Δ Γ (U-→I x u) | yes ty tm refl = yes (Arr x ty) (→I x tm) refl
+  infer Δ Γ (U-→I x u) | no err = no (→I-body-error err)
+  infer Δ Γ (U-→E f x) with infer Δ Γ f
+  infer Δ Γ (U-→E f x) | yes (Arr A B) tm refl with check Δ Γ x A
+  infer Δ Γ (U-→E _ x) | yes (Arr A B) tm refl | yes x' refl = yes B (→E tm x') refl
+  infer Δ Γ (U-→E _ x) | yes (Arr A B) tm refl | no err = no (→E-right-error err)
+  infer Δ Γ (U-→E f x) | yes (Box _ _) tm refl = no (expected-function tm ■-Not-Arrow)
+  infer Δ Γ (U-→E f x) | no err = no (→E-left-error err)
+  infer Δ Γ (U-■I Ψ u) with infer Δ Ψ u
+  infer Δ Γ (U-■I Ψ u) | yes ty tm refl = yes (Box Ψ ty) (■I Ψ tm) refl
+  infer Δ Γ (U-■I Ψ u) | no err = no (■I-error err)
+  infer Δ Γ (U-■E a b) with infer Δ Γ a
+  infer Δ Γ (U-■E .(untag tm) b) | yes (Box Ψ ty) tm refl with infer ((Ψ , ty) ∷ Δ) Γ b
+  infer Δ Γ (U-■E .(untag tm) b) | yes (Box Ψ ty) tm refl | yes bty btm refl =
+   yes bty (■E tm btm) refl
+  infer Δ Γ (U-■E .(untag tm) b) | yes (Box Ψ ty) tm refl | no err = no (■E-right-error err)
+  infer Δ Γ (U-■E .(untag tm) b) | yes (Arr _ _) tm refl = no (expected-box tm →-Not-Box)
+  infer Δ Γ (U-■E a b) | no err = no (■E-left-error err)
