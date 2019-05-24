@@ -184,33 +184,13 @@ context-identity {Δ} {x ∷ xs} = All-cons (Var here) (rename-All there context
 σ-C f here = CVar here context-identity
 σ-C f (there a) = rename-C there (f a)
 
-upgrade :
-  ∀{A Δ Γ Ψ} →
-  Tm Δ Ψ A →
+alls :
+  ∀{Γ Δ Ψ} →
   All (Tm Δ Γ) Ψ →
-  Tm Δ Γ A
-upgrade a All-nil = rename (λ ()) a
-{- this is like whoa. what does it mean, exactly? -}
-upgrade a (All-cons x xs) = →E (upgrade (→I _ a) xs) x
-
-mutual
-  subst-C-All :
-    ∀{Γ Δ Δ'} →
-    (∀{Ψ A} → (Ψ , A) ∈ Δ → Tm Δ' Ψ A) →
-    ∀{Ψ} → All (Tm Δ Γ) Ψ → All (Tm Δ' Γ) Ψ
-  subst-C-All f All-nil = All-nil
-  subst-C-All f (All-cons x₁ a) = All-cons (subst-C f x₁) (subst-C-All f a)
-
-  subst-C : ∀{Γ Δ Δ'} → (∀{Ψ A} → (Ψ , A) ∈ Δ → Tm Δ' Ψ A) → ∀{A} → Tm Δ Γ A → Tm Δ' Γ A
-  subst-C f (Var x) = Var x
-  subst-C f (CVar x prf) = upgrade (f x) (subst-C-All f prf)
-  subst-C f (→I ty a) = →I ty (subst-C f a)
-  subst-C f (→E a a₁) = →E (subst-C f a) (subst-C f a₁)
-  subst-C f (■I Ψ a) = ■I Ψ (subst-C f a)
-  subst-C f (■E a a₁) = ■E (subst-C f a) (subst-C (σ-C f) a₁)
-  subst-C f NatI-zero = NatI-zero
-  subst-C f (NatI-suc n) = NatI-suc (subst-C f n)
-  subst-C f (NatE z s n) = NatE (subst-C f z) (subst-C f s) (subst-C f n)
+  (∀{A} → A ∈ Ψ → Tm Δ Γ A)
+alls All-nil ()
+alls (All-cons x a) here = x
+alls (All-cons x a) (there prf) = alls a prf
 
 σ :
   ∀{Δ Γ Γ'} →
@@ -237,6 +217,25 @@ mutual
   subst f NatI-zero = NatI-zero
   subst f (NatI-suc n) = NatI-suc (subst f n)
   subst f (NatE z s n) = NatE (subst f z) (subst f s) (subst f n)
+
+mutual
+  subst-C-All :
+    ∀{Γ Δ Δ'} →
+    (∀{Ψ A} → (Ψ , A) ∈ Δ → Tm Δ' Ψ A) →
+    ∀{Ψ} → All (Tm Δ Γ) Ψ → All (Tm Δ' Γ) Ψ
+  subst-C-All f All-nil = All-nil
+  subst-C-All f (All-cons x₁ a) = All-cons (subst-C f x₁) (subst-C-All f a)
+
+  subst-C : ∀{Γ Δ Δ'} → (∀{Ψ A} → (Ψ , A) ∈ Δ → Tm Δ' Ψ A) → ∀{A} → Tm Δ Γ A → Tm Δ' Γ A
+  subst-C f (Var x) = Var x
+  subst-C f (CVar x prf) = subst (alls (subst-C-All f prf)) (f x)
+  subst-C f (→I ty a) = →I ty (subst-C f a)
+  subst-C f (→E a a₁) = →E (subst-C f a) (subst-C f a₁)
+  subst-C f (■I Ψ a) = ■I Ψ (subst-C f a)
+  subst-C f (■E a a₁) = ■E (subst-C f a) (subst-C (σ-C f) a₁)
+  subst-C f NatI-zero = NatI-zero
+  subst-C f (NatI-suc n) = NatI-suc (subst-C f n)
+  subst-C f (NatE z s n) = NatE (subst-C f z) (subst-C f s) (subst-C f n)
 
 data Value {Δ} {Γ} : ∀{A} → Tm Δ Γ A → Set where
   v-→I : ∀{B} → (A : Ty) → (a : Tm Δ (A ∷ Γ) B) → Value (→I A a)
