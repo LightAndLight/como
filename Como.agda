@@ -14,30 +14,45 @@ open import Relation.Binary.PropositionalEquality using (_≡_; refl; cong; sym)
 data Ty : Set where
   Arr : Ty → Ty → Ty
   Box : List Ty → Ty → Ty
+  Nat : Ty
 
 data Not-Arrow : Ty → Set where
   ■-Not-Arrow : ∀{A B} → Not-Arrow (Box A B)
+  Nat-Not-Arrow : Not-Arrow Nat
 
 Not-Arrow-correct : ∀{a} → Not-Arrow a → (x y : Ty) → ¬(a ≡ Arr x y)
 Not-Arrow-correct ■-Not-Arrow x y ()
+Not-Arrow-correct Nat-Not-Arrow x y ()
 
 data Not-Box : Ty → Set where
   →-Not-Box : ∀{A B} → Not-Box (Arr A B)
+  Nat-Not-Box : Not-Box Nat
 
 Not-Box-correct : ∀{a} → Not-Box a → (x : List Ty) → (y : Ty) → ¬(a ≡ Box x y)
 Not-Box-correct →-Not-Box x y ()
+Not-Box-correct Nat-Not-Box x y ()
+
+data Not-Nat : Ty → Set where
+  →-Not-Nat : ∀{A B} → Not-Nat (Arr A B)
+  Box-Not-Nat : ∀{A B} → Not-Nat (Box A B)
+
+Not-Nat-correct : ∀{a} → Not-Nat a → (x : List Ty) → (y : Ty) → ¬(a ≡ Nat)
+Not-Nat-correct →-Not-Nat x y ()
+Not-Nat-correct Box-Not-Nat x y ()
 
 isYes : ∀{P : Set} → Dec P → Bool
 isYes (yes _) = true
 isYes (no _) = false
 
 eqTy : (t u : Ty) → Dec (t ≡ u)
+eqTy (Arr t t₁) Nat = no (λ ())
 eqTy (Arr t t₁) (Arr u u₁) with eqTy t u
 eqTy (Arr t t₁) (Arr .t u₁) | yes refl with eqTy t₁ u₁
 eqTy (Arr t t₁) (Arr .t .t₁) | yes refl | yes refl = yes refl
 eqTy (Arr t t₁) (Arr .t u₁) | yes refl | no contra = no λ{ refl → contra refl }
 eqTy (Arr t t₁) (Arr u u₁) | no contra = no λ{ refl → contra refl }
 eqTy (Arr t t₁) (Box u u₁) = no (λ ())
+eqTy (Box t t₁) Nat = no (λ ())
 eqTy (Box t t₁) (Arr u u₁) = no (λ ())
 eqTy (Box [] t₁) (Box [] u₁) with eqTy t₁ u₁
 eqTy (Box [] t₁) (Box [] .t₁) | yes refl = yes refl
@@ -50,6 +65,9 @@ eqTy (Box (x ∷ t) t₁) (Box (x₁ ∷ u) u₁) | yes refl with eqTy (Box t t�
 eqTy (Box (x ∷ t) t₁) (Box (x ∷ u) u₁) | yes refl | yes refl = yes refl
 eqTy (Box (x ∷ t) t₁) (Box (x ∷ u) u₁) | yes refl | no contra =
   no λ{ refl → contra refl }
+eqTy Nat Nat = yes refl
+eqTy Nat (Box _ _) = no (λ ())
+eqTy Nat (Arr _ _) = no (λ ())
 
 infix 3 _∈_
 data _∈_ {A : Set} : A → List A → Set where
@@ -96,15 +114,19 @@ map-All :
 map-All f All-nil = All-nil
 map-All f (All-cons x₁ a) = All-cons (f x₁) (map-All f a)
 
-data Tm : List (List Ty × Ty) → List Ty → Ty → Set where
-  Var : ∀{A Δ Γ} → A ∈ Γ → Tm Δ Γ A
-  CVar : ∀{Ψ A Δ Γ} → (Ψ , A) ∈ Δ → All (Tm Δ Γ) Ψ → Tm Δ Γ A
+data Tm (Δ : List (List Ty × Ty)) (Γ : List Ty) : Ty → Set where
+  Var : ∀{A} → A ∈ Γ → Tm Δ Γ A
+  CVar : ∀{Ψ A} → (Ψ , A) ∈ Δ → All (Tm Δ Γ) Ψ → Tm Δ Γ A
 
-  →I : ∀{B Δ Γ} → (A : Ty) → Tm Δ (A ∷ Γ) B → Tm Δ Γ (Arr A B)
-  →E : ∀{A B Δ Γ} → Tm Δ Γ (Arr A B) → Tm Δ Γ A → Tm Δ Γ B
+  →I : ∀{B} → (A : Ty) → Tm Δ (A ∷ Γ) B → Tm Δ Γ (Arr A B)
+  →E : ∀{A B} → Tm Δ Γ (Arr A B) → Tm Δ Γ A → Tm Δ Γ B
 
-  ■I : ∀{A Δ Γ} → (Ψ : List Ty) → Tm Δ Ψ A → Tm Δ Γ (Box Ψ A)
-  ■E : ∀{A B Δ Ψ Γ} → Tm Δ Γ (Box Ψ A) → Tm ((Ψ , A) ∷ Δ) Γ B → Tm Δ Γ B
+  ■I : ∀{A} → (Ψ : List Ty) → Tm Δ Ψ A → Tm Δ Γ (Box Ψ A)
+  ■E : ∀{A B Ψ} → Tm Δ Γ (Box Ψ A) → Tm ((Ψ , A) ∷ Δ) Γ B → Tm Δ Γ B
+
+  NatI-zero : Tm Δ Γ Nat
+  NatI-suc : Tm Δ Γ Nat → Tm Δ Γ Nat
+  NatE : ∀{A} → Tm Δ Γ A → Tm Δ Γ (Arr A A) → Tm Δ Γ Nat → Tm Δ Γ A
 
 ρ :
   ∀{A : Set} {xs xs' : List A} →
@@ -131,6 +153,9 @@ mutual
   rename f (→E a a₁) = →E (rename f a) (rename f a₁)
   rename f (■I Ψ a) = ■I Ψ a
   rename f (■E a a₁) = ■E (rename f a) (rename f a₁)
+  rename f NatI-zero = NatI-zero
+  rename f (NatI-suc n) = NatI-suc (rename f n)
+  rename f (NatE z s n) = NatE (rename f z) (rename f s) (rename f n)
 
 mutual
   rename-C-All : ∀{Δ Δ'} → (∀{A} → A ∈ Δ → A ∈ Δ') → ∀{Γ Ψ} → All (Tm Δ Γ) Ψ → All (Tm Δ' Γ) Ψ
@@ -144,6 +169,9 @@ mutual
   rename-C f (→E a a₁) = →E (rename-C f a) (rename-C f a₁)
   rename-C f (■I Ψ a) = ■I Ψ (rename-C f a)
   rename-C f (■E a a₁) = ■E (rename-C f a) (rename-C (ρ f) a₁)
+  rename-C f NatI-zero = NatI-zero
+  rename-C f (NatI-suc n) = NatI-suc (rename-C f n)
+  rename-C f (NatE z s n) = NatE (rename-C f z) (rename-C f s) (rename-C f n)
 
 context-identity : ∀{Δ Ψ} → All (Tm Δ Ψ) Ψ
 context-identity {Δ} {[]} = All-nil
@@ -180,6 +208,9 @@ mutual
   subst-C f (→E a a₁) = →E (subst-C f a) (subst-C f a₁)
   subst-C f (■I Ψ a) = ■I Ψ (subst-C f a)
   subst-C f (■E a a₁) = ■E (subst-C f a) (subst-C (σ-C f) a₁)
+  subst-C f NatI-zero = NatI-zero
+  subst-C f (NatI-suc n) = NatI-suc (subst-C f n)
+  subst-C f (NatE z s n) = NatE (subst-C f z) (subst-C f s) (subst-C f n)
 
 σ :
   ∀{Δ Γ Γ'} →
@@ -203,11 +234,15 @@ mutual
   subst f (→E a a₁) = →E (subst f a) (subst f a₁)
   subst f (■I Ψ a) = ■I Ψ a
   subst f (■E a a₁) = ■E (subst f a) (subst (rename-C there ∘ f) a₁)
-
+  subst f NatI-zero = NatI-zero
+  subst f (NatI-suc n) = NatI-suc (subst f n)
+  subst f (NatE z s n) = NatE (subst f z) (subst f s) (subst f n)
 
 data Value {Δ} {Γ} : ∀{A} → Tm Δ Γ A → Set where
   v-→I : ∀{B} → (A : Ty) → (a : Tm Δ (A ∷ Γ) B) → Value (→I A a)
   v-■I : ∀{A Ψ} {a : Tm Δ Ψ A} → Value (■I Ψ a)
+  v-NatI-zero : Value NatI-zero
+  v-NatI-suc : ∀{n} → Value n → Value (NatI-suc n)
 
 data _↓_ {Δ Γ} : ∀{A} → Tm Δ Γ A → Tm Δ Γ A → Set where
   ↓-→E₁ :
@@ -230,10 +265,21 @@ data _↓_ {Δ Γ} : ∀{A} → Tm Δ Γ A → Tm Δ Γ A → Set where
   ↓-unbox :
     ∀{A B Ψ} {a} {b : Tm ((Ψ , A) ∷ Δ) Γ B} →
     ■E (■I Ψ a) b ↓ subst-C (λ { here → a; (there p) → CVar p context-identity }) b
+  ↓-NatI-suc : ∀{n n'} → n ↓ n' → NatI-suc n ↓ NatI-suc n'
+
+  ↓-NatE₁ : ∀{A} {z z' : Tm Δ Γ A} {s n} → z ↓ z' → NatE z s n ↓ NatE z' s n
+  ↓-NatE₂ : ∀{A} {z : Tm Δ Γ A} {s s' n} → Value z → s ↓ s' → NatE z s n ↓ NatE z s' n
+  ↓-NatE₃ : ∀{A} {z : Tm Δ Γ A} {s n n'} → Value z → Value s → n ↓ n' → NatE z s n ↓ NatE z s n'
+  ↓-NatE-zero : ∀{A} {z : Tm Δ Γ A} {s} → NatE z s NatI-zero ↓ z
+  ↓-NatE-suc :
+    ∀{A} {z : Tm Δ Γ A} {s n} →
+    NatE z s (NatI-suc n) ↓ →E s (NatE z s n)
 
 value-¬↓ : ∀{Δ Γ A} {tm : Tm Δ Γ A} → (v : Value tm) → ¬( ∃[ tm' ]( tm ↓ tm' ))
 value-¬↓ (v-→I _ _) (tm' , ())
 value-¬↓ v-■I (tm' , ())
+value-¬↓ v-NatI-zero (tm' , ())
+value-¬↓ (v-NatI-suc v) (NatI-suc n , ↓-NatI-suc n↓n') = value-¬↓ v (n , n↓n')
 
 progress : ∀{A} → (tm : Tm [] [] A) → Value tm ⊎ (∃[ tm' ](tm ↓ tm'))
 progress (Var ())
@@ -248,6 +294,20 @@ progress (■I Ψ tm) = inj₁ v-■I
 progress (■E tm tm₁) with progress tm
 progress (■E tm tm₁) | inj₂ (tm' , tm↓tm') = inj₂ (■E tm' tm₁ , ↓-■E₁ tm↓tm')
 progress (■E (■I Ψ a) tm₁) | inj₁ v-■I = inj₂ (_ , ↓-unbox)
+progress NatI-zero = inj₁ v-NatI-zero
+progress (NatI-suc n) with progress n
+progress (NatI-suc n) | inj₁ vn = inj₁ (v-NatI-suc vn)
+progress (NatI-suc n) | inj₂ (n' , n↓n') = inj₂ (NatI-suc n' , ↓-NatI-suc n↓n')
+progress (NatE z s n) with progress z
+progress (NatE z s n) | inj₂ (z' , z↓z') = inj₂ (NatE z' s n , ↓-NatE₁ z↓z')
+progress (NatE z s n) | inj₁ vz with progress s
+progress (NatE z s n) | inj₁ vz | inj₂ (s' , s↓s') = inj₂ (NatE z s' n , ↓-NatE₂ vz s↓s')
+progress (NatE z s n) | inj₁ vz | inj₁ vs with progress n
+progress (NatE z s n) | inj₁ vz | inj₁ vs | inj₂ (n' , n↓n') =
+  inj₂ (NatE z s n' , ↓-NatE₃ vz vs n↓n')
+progress (NatE z s .NatI-zero) | inj₁ vz | inj₁ vs | inj₁ v-NatI-zero = inj₂ (z , ↓-NatE-zero)
+progress (NatE z s (NatI-suc n)) | inj₁ vz | inj₁ vs | inj₁ (v-NatI-suc vn) =
+  inj₂ (→E s (NatE z s n) , ↓-NatE-suc)
 
 data U : Set where
   U-Var : ℕ → U
@@ -258,6 +318,10 @@ data U : Set where
 
   U-■I : List Ty → U → U
   U-■E : U → U → U
+
+  U-NatI-zero : U
+  U-NatI-suc : U → U
+  U-NatE : U → U → U → U
 
 ρ-U : (ℕ → ℕ) → (ℕ → ℕ)
 ρ-U f zero = zero
@@ -275,6 +339,9 @@ mutual
   rename-U f (U-→E a a₁) = U-→E (rename-U f a) (rename-U f a₁)
   rename-U f (U-■I Ψ a) = U-■I Ψ a
   rename-U f (U-■E a b) = U-■E (rename-U f a) (rename-U f b)
+  rename-U f U-NatI-zero = U-NatI-zero
+  rename-U f (U-NatI-suc n) = U-NatI-suc (rename-U f n)
+  rename-U f (U-NatE z s n) = U-NatE (rename-U f z) (rename-U f s) (rename-U f n)
 
 mutual
   untag-All : ∀{Δ Γ xs} → All (Tm Δ Γ) xs → List U
@@ -288,6 +355,9 @@ mutual
   untag (→E t u) = U-→E (untag t) (untag u)
   untag (■I Ψ t) = U-■I Ψ (untag t)
   untag (■E t u) = U-■E (untag t) (untag u)
+  untag NatI-zero = U-NatI-zero
+  untag (NatI-suc n) = U-NatI-suc (untag n)
+  untag (NatE z s n) = U-NatE (untag z) (untag s) (untag n)
 
 data _<_ {A B : Set} : List A → List B → Set where
   nil-< : ∀{x xs} → [] < (x ∷ xs)
@@ -339,6 +409,22 @@ mutual
       ∀{a b x Ψ t} →
       InferError ((Ψ , t) ∷ Δ) Γ x →
       InferError Δ Γ (U-■E a b)
+    NatI-suc-error :
+      ∀{n} →
+      CheckError Δ Γ n Nat →
+      InferError Δ Γ (U-NatI-suc n)
+    NatE-1-error :
+      ∀{z s n} →
+      InferError Δ Γ z →
+      InferError Δ Γ (U-NatE z s n)
+    NatE-2-error :
+      ∀{A z s n} →
+      CheckError Δ Γ s (Arr A A)→
+      InferError Δ Γ (U-NatE z s n)
+    NatE-3-error :
+      ∀{z s n} →
+      CheckError Δ Γ n Nat →
+      InferError Δ Γ (U-NatE z s n)
     expected-function :
       ∀{t x} →
       (tm : Tm Δ Γ t) →
@@ -413,6 +499,14 @@ mutual
     rewrite
       untag-rename f g prf tm |
       untag-rename f g prf tm₁ = refl
+  untag-rename f g x NatI-zero = refl
+  untag-rename f g x (NatI-suc n) = cong U-NatI-suc (untag-rename f g x n)
+  untag-rename f g x (NatE z s n)
+    rewrite
+      untag-rename f g x z |
+      untag-rename f g x s |
+      untag-rename f g x n
+      = refl
 
 untag-rename-there :
   ∀{A B u Δ Γ} →
@@ -436,6 +530,14 @@ untag-rename-there {_} {B} (■E tm tm₁) refl
   rewrite
     untag-rename (there {_} {B}) suc (λ p → refl) tm |
     untag-rename (there {_} {B}) suc (λ p → refl) tm₁
+    = refl
+untag-rename-there NatI-zero refl = refl
+untag-rename-there (NatI-suc n) refl = cong U-NatI-suc (untag-rename-there n refl)
+untag-rename-there {_} {B} (NatE z s n) refl
+  rewrite
+    untag-rename (there {_} {B}) suc (λ p → refl) z |
+    untag-rename (there {_} {B}) suc (λ p → refl) s |
+    untag-rename (there {_} {B}) suc (λ p → refl) n
     = refl
 
 Lookup-∈ : ∀{A : Set} {x : A} {n xs} → Lookup n x xs → x ∈ xs
@@ -478,6 +580,19 @@ mutual
   check Δ Γ tm ty | no err = no (infer-error err)
 
   infer : (Δ : List (List Ty × Ty)) → (Γ : List Ty) → (u : U) → Infer Δ Γ u
+  infer Δ Γ U-NatI-zero = yes Nat NatI-zero refl
+  infer Δ Γ (U-NatI-suc n) with check Δ Γ n Nat
+  infer Δ Γ (U-NatI-suc n) | yes tm refl = yes Nat (NatI-suc tm) refl
+  infer Δ Γ (U-NatI-suc n) | no err = no (NatI-suc-error err)
+  infer Δ Γ (U-NatE z s n) with infer Δ Γ z
+  infer Δ Γ (U-NatE z s n) | yes zTy z' refl with check Δ Γ s (Arr zTy zTy)
+  infer Δ Γ (U-NatE .(untag z') s n) | yes zTy z' refl | yes s' refl with check Δ Γ n Nat
+  infer Δ Γ (U-NatE .(untag z') .(untag s') n) | yes zTy z' refl | yes s' refl | yes n' refl =
+    yes zTy (NatE z' s' n') refl
+  infer Δ Γ (U-NatE .(untag z') .(untag s') n) | yes zTy z' refl | yes s' refl | no err =
+    no (NatE-3-error err)
+  infer Δ Γ (U-NatE .(untag z') s n) | yes zTy z' refl | no err = no (NatE-2-error err)
+  infer Δ Γ (U-NatE z s n) | no err = no (NatE-1-error err)
   infer Δ Γ (U-Var n) with decLookup n Γ
   infer Δ Γ (U-Var n) | yes (t , prf) =
     yes t (Var (Lookup-∈ prf)) (cong U-Var (toℕ-Lookup-∈ prf))
@@ -496,6 +611,7 @@ mutual
   infer Δ Γ (U-→E _ x) | yes (Arr A B) tm refl | yes x' refl = yes B (→E tm x') refl
   infer Δ Γ (U-→E _ x) | yes (Arr A B) tm refl | no err = no (→E-right-error err)
   infer Δ Γ (U-→E f x) | yes (Box _ _) tm refl = no (expected-function tm ■-Not-Arrow)
+  infer Δ Γ (U-→E f x) | yes Nat tm refl = no (expected-function tm Nat-Not-Arrow)
   infer Δ Γ (U-→E f x) | no err = no (→E-left-error err)
   infer Δ Γ (U-■I Ψ u) with infer Δ Ψ u
   infer Δ Γ (U-■I Ψ u) | yes ty tm refl = yes (Box Ψ ty) (■I Ψ tm) refl
@@ -506,4 +622,68 @@ mutual
    yes bty (■E tm btm) refl
   infer Δ Γ (U-■E .(untag tm) b) | yes (Box Ψ ty) tm refl | no err = no (■E-right-error err)
   infer Δ Γ (U-■E .(untag tm) b) | yes (Arr _ _) tm refl = no (expected-box tm →-Not-Box)
+  infer Δ Γ (U-■E .(untag tm) b) | yes Nat tm refl = no (expected-box tm Nat-Not-Box)
   infer Δ Γ (U-■E a b) | no err = no (■E-left-error err)
+
+{-
+
+given    y : Box [] B
+
+⟨ λx. ~y ⟩ desugars to
+
+let Box a = y in
+let Box b = Box[y : B](λ(x : A). y) in
+Box[]( b[a] )
+
+
+
+{
+or this?
+
+
+let Box b = Box[y](λ(x : A). y) in
+Box[]( let Box a = x in b[a] )
+
+nah this isn't well-typed
+}
+
+
+-}
+test : (A B : Ty) → Tm [] (Box [] B ∷ []) (Box [] (Arr A B))
+test A B =
+  ■E (Var here)
+  (■E (■I (B ∷ []) (→I A (Var (there here))))
+  (■I [] (CVar here (All-cons (CVar (there here) All-nil) All-nil))))
+
+{-
+
+given    f : Box [] (A -> B)
+
+⟨ λ(x : A). ~f x ⟩ desugars to
+
+let Box a = f in
+let Box b = Box[f : A -> B](λ(x : A). f x) in
+Box[]( b[a] )
+
+-}
+
+{-
+
+given    f : Box [] (A -> B -> C),  x : Box [] A
+
+⟨ ~f ~x ⟩ desugars to
+
+let Box f' = f in
+let Box x' = x in
+let Box b = Box[f : A -> B -> C, x : A](f x) in
+Box[]( b[f', x'] )
+
+it has type Box[](B -> C)
+
+-}
+test2 : (A B C : Ty) → Tm [] (Box [] A ∷ Box [] (Arr A (Arr B C)) ∷ []) (Box [] (Arr B C))
+test2 A B C =
+  ■E (Var (there here))
+  (■E (Var here)
+  (■E (■I (Arr A (Arr B C) ∷ A ∷ []) (→E (Var here) (Var (there here))))
+  (■I [] (CVar here (All-cons (CVar (there (there here)) All-nil) (All-cons (CVar (there here) All-nil) All-nil))))))
