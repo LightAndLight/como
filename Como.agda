@@ -126,7 +126,7 @@ data Tm (Δ : List (List Ty × Ty)) (Γ : List Ty) : Ty → Set where
 
   NatI-zero : Tm Δ Γ Nat
   NatI-suc : Tm Δ Γ Nat → Tm Δ Γ Nat
-  NatE : ∀{A} → Tm Δ Γ A → Tm Δ Γ (Arr A A) → Tm Δ Γ Nat → Tm Δ Γ A
+  NatE : ∀{A} → Tm Δ Γ A → Tm Δ Γ (Arr Nat A) → Tm Δ Γ Nat → Tm Δ Γ A
 
 ρ :
   ∀{A : Set} {xs xs' : List A} →
@@ -273,7 +273,7 @@ data _↓_ {Δ Γ} : ∀{A} → Tm Δ Γ A → Tm Δ Γ A → Set where
   ↓-NatE-zero : ∀{A} {z : Tm Δ Γ A} {s} → NatE z s NatI-zero ↓ z
   ↓-NatE-suc :
     ∀{A} {z : Tm Δ Γ A} {s n} →
-    NatE z s (NatI-suc n) ↓ →E s (NatE z s n)
+    NatE z s (NatI-suc n) ↓ →E s n
 
 value-¬↓ : ∀{Δ Γ A} {tm : Tm Δ Γ A} → (v : Value tm) → ¬( ∃[ tm' ]( tm ↓ tm' ))
 value-¬↓ (v-→I _ _) (tm' , ())
@@ -307,7 +307,7 @@ progress (NatE z s n) | inj₁ vz | inj₁ vs | inj₂ (n' , n↓n') =
   inj₂ (NatE z s n' , ↓-NatE₃ vz vs n↓n')
 progress (NatE z s .NatI-zero) | inj₁ vz | inj₁ vs | inj₁ v-NatI-zero = inj₂ (z , ↓-NatE-zero)
 progress (NatE z s (NatI-suc n)) | inj₁ vz | inj₁ vs | inj₁ (v-NatI-suc vn) =
-  inj₂ (→E s (NatE z s n) , ↓-NatE-suc)
+  inj₂ (→E s n , ↓-NatE-suc)
 
 data U : Set where
   U-Var : ℕ → U
@@ -419,7 +419,7 @@ mutual
       InferError Δ Γ (U-NatE z s n)
     NatE-2-error :
       ∀{A z s n} →
-      CheckError Δ Γ s (Arr A A)→
+      CheckError Δ Γ s (Arr Nat A)→
       InferError Δ Γ (U-NatE z s n)
     NatE-3-error :
       ∀{z s n} →
@@ -585,7 +585,7 @@ mutual
   infer Δ Γ (U-NatI-suc n) | yes tm refl = yes Nat (NatI-suc tm) refl
   infer Δ Γ (U-NatI-suc n) | no err = no (NatI-suc-error err)
   infer Δ Γ (U-NatE z s n) with infer Δ Γ z
-  infer Δ Γ (U-NatE z s n) | yes zTy z' refl with check Δ Γ s (Arr zTy zTy)
+  infer Δ Γ (U-NatE z s n) | yes zTy z' refl with check Δ Γ s (Arr Nat zTy)
   infer Δ Γ (U-NatE .(untag z') s n) | yes zTy z' refl | yes s' refl with check Δ Γ n Nat
   infer Δ Γ (U-NatE .(untag z') .(untag s') n) | yes zTy z' refl | yes s' refl | yes n' refl =
     yes zTy (NatE z' s' n') refl
