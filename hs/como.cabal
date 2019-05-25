@@ -19,6 +19,8 @@ library
   exposed-modules:     Eval, Parser, Syntax, Typecheck
   build-depends:       base ^>=4.12.0.0
                      , containers ^>=0.6
+                     , lens ^>=4.17
+                     , mtl ^>=2.2
                      , parsers ^>=0.12
                      , text ^>=1.2
                      , trifecta ^>=2

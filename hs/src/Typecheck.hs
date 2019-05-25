@@ -1,11 +1,29 @@
+{-# language FlexibleContexts #-}
+{-# language TemplateHaskell #-}
 module Typecheck where
 
+import Control.Lens.Getter (view)
+import Control.Lens.Setter (locally)
+import Control.Lens.TH (makeLenses)
+import Control.Monad.Except (ExceptT, runExceptT, throwError)
+import Control.Monad.Reader (MonadReader)
 import Data.Map (Map)
 import Data.Text (Text)
 
 import qualified Data.Map as Map
 
 import Syntax (Exp(..), Ty(..))
+
+mkEnv :: Map Text Ty -> Env
+mkEnv a = Env { _namesCtx = a, _modalCtx = [], _ctx = [] }
+
+data Env
+  = Env
+  { _namesCtx :: Map Text Ty
+  , _modalCtx :: [(Text, [Ty], Ty)]
+  , _ctx :: [Ty]
+  } deriving (Eq, Ord, Show)
+makeLenses ''Env
 
 data CheckErrorSubst
   = TooFewTerms [Exp] [Ty]
@@ -19,8 +37,9 @@ data CheckError
   deriving (Eq, Ord, Show)
 
 data InferError
-  = NotInScope Text
-  | NotInScopeM Text
+  = NotInScope Int
+  | NotInScopeM Int
+  | NotInScopeMName Text
   | NotInScopeName Text
   | LamBodyError InferError
   | AppLeftError InferError
@@ -38,106 +57,123 @@ data InferError
   deriving (Eq, Ord, Show)
 
 checkSubst ::
-  Map Text Ty ->
-  [([Ty], Ty)] ->
-  [Ty] ->
+  MonadReader Env m =>
   [Exp] ->
   [Ty] ->
-  Either CheckErrorSubst [Exp]
-checkSubst _ _ _ [] [] = pure []
-checkSubst _ _ _ [] (x : ts) = Left $ TooFewTerms [] (x : ts)
-checkSubst _ _ _ (x : us) [] = Left $ TooManyTerms (x : us) []
-checkSubst nctx mctx ctx (u : us) (t : ts) =
-  case checkSubst nctx mctx ctx us ts of
-    Right us' ->
-      case check nctx mctx ctx u t of
+  ExceptT CheckErrorSubst m [Exp]
+checkSubst [] [] = pure []
+checkSubst [] (x : ts) = throwError $ TooFewTerms [] (x : ts)
+checkSubst (x : us) [] = throwError $ TooManyTerms (x : us) []
+checkSubst (u : us) (t : ts) = do
+  res0 <- runExceptT $ checkSubst us ts
+  case res0 of
+    Right us' -> do
+      res1 <- runExceptT $ check u t
+      case res1 of
         Right u' -> pure $ u' : us'
-        Left err -> Left $ TypeErrors [err]
-    Left (TooFewTerms a b) -> Left $ TooFewTerms (u : a) (t : b)
-    Left (TooManyTerms a b) -> Left $ TooManyTerms (u : a) (t : b)
-    Left (TypeErrors errs) ->
-      case check nctx mctx ctx u t of
-        Right{} -> Left $ TypeErrors errs
-        Left err -> Left $ TypeErrors (err : errs)
+        Left err -> throwError $ TypeErrors [err]
+    Left (TooFewTerms a b) -> throwError $ TooFewTerms (u : a) (t : b)
+    Left (TooManyTerms a b) -> throwError $ TooManyTerms (u : a) (t : b)
+    Left (TypeErrors errs) -> do
+      res1 <- runExceptT $ check u t
+      case res1 of
+        Right{} -> throwError $ TypeErrors errs
+        Left err -> throwError $ TypeErrors (err : errs)
 
 check ::
-  Map Text Ty ->
-  [([Ty], Ty)] ->
-  [Ty] ->
+  MonadReader Env m =>
   Exp ->
   Ty ->
-  Either CheckError Exp
-check nctx mctx ctx tm ty =
-  case infer nctx mctx ctx tm of
+  ExceptT CheckError m Exp
+check tm ty = do
+  res0 <- runExceptT $ infer tm
+  case res0 of
     Right ty' ->
       case ty == ty' of
         True -> pure tm
-        False -> Left $ TypeMismatch ty ty'
-    Left err -> Left $ InferError err
+        False -> throwError $ TypeMismatch ty ty'
+    Left err -> throwError $ InferError err
 
 index :: Int -> [a] -> Maybe a
 index _ [] = Nothing
-index 0 (x : xs) = Just x
+index 0 (x : _) = Just x
 index n (_ : xs) = index (n-1) xs
 
 infer ::
-  Map Text Ty ->
-  [([Ty], Ty)] ->
-  [Ty] ->
+  MonadReader Env m =>
   Exp ->
-  Either InferError Ty
-infer nctx mctx ctx NatZero = pure TyNat
-infer nctx mctx ctx (NatSuc n) =
-  case check nctx mctx ctx n TyNat of
+  ExceptT InferError m Ty
+infer NatZero = pure TyNat
+infer (NatSuc n) = do
+  res0 <- runExceptT $ check n TyNat
+  case res0 of
     Right{} -> pure TyNat
-    Left err -> Left $ NatSucError err
-infer nctx mctx ctx (NatCase z s n) =
-  case infer nctx mctx ctx z of
-    Right zTy ->
-      case check nctx mctx ctx s (TyArr TyNat zTy) of
-        Right{} ->
-          case check nctx mctx ctx n TyNat of
+    Left err -> throwError $ NatSucError err
+infer (NatCase z s n) = do
+  res0 <- runExceptT $ infer z
+  case res0 of
+    Right zTy -> do
+      res1 <- runExceptT $ check s (TyArr TyNat zTy)
+      case res1 of
+        Right{} -> do
+          res2 <- runExceptT $ check n TyNat
+          case res2 of
             Right{} -> pure zTy
-            Left err -> Left $ NatCase3Error err
-        Left err -> Left $ NatCase2Error err
-    Left err -> Left $ NatCase1Error err
-infer nctx mctx ctx (Name n) =
+            Left err -> throwError $ NatCase3Error err
+        Left err -> throwError $ NatCase2Error err
+    Left err -> throwError $ NatCase1Error err
+infer (Name n) = do
+  nctx <- view namesCtx
   case Map.lookup n nctx of
     Just t -> pure t
-    Nothing -> Left $ NotInScopeName n
-infer nctx mctx ctx (Var n) =
-  case index n ctx of
+    Nothing -> throwError $ NotInScopeName n
+infer (MName n _) = throwError $ NotInScopeMName n
+infer (Var n) = do
+  c <- view ctx
+  case index n c of
     Just t -> pure t
-    Nothing -> Left $ NotInScope _
-infer nctx mctx ctx (MVar n xs) =
+    Nothing -> throwError $ NotInScope n
+infer (MVar n xs) = do
+  mctx <- view modalCtx
   case index n mctx of
-    Just (ts, t) ->
-      case checkSubst nctx mctx ctx xs ts of
+    Just (name, ts, t) -> do
+      res0 <- runExceptT $ checkSubst xs ts
+      case res0 of
         Right{} -> pure t
-        Left err -> Left $ CheckErrorSubst _ err
-    Nothing -> Left $ NotInScopeM _
-infer nctx mctx ctx (Lam name ty u) =
-  case infer nctx mctx (ty : ctx) u of
+        Left err -> throwError $ CheckErrorSubst name err
+    Nothing -> throwError $ NotInScopeM n
+infer (Lam _ ty u) = do
+  res0 <- runExceptT $ locally ctx (ty :) (infer u)
+  case res0 of
     Right uTy -> pure $ TyArr ty uTy
-    Left err -> Left $ LamBodyError err
-infer nctx mctx ctx (App f x) =
-  case infer nctx mctx ctx f of
-    Right (TyArr a b) ->
-      case check nctx mctx ctx x a of
+    Left err -> throwError $ LamBodyError err
+infer (App f x) = do
+  res0 <- runExceptT $ infer f
+  case res0 of
+    Right (TyArr a b) -> do
+      res1 <- runExceptT $ check x a
+      case res1 of
         Right{} -> pure b
-        Left err -> Left $ AppRightError err
-    Right a -> Left $ ExpectedFunction a
-    Left err -> Left $ AppLeftError err
-infer nctx mctx ctx (Box ts u) =
-  let tys = snd <$> ts in
-  case infer mempty mctx tys u of
+        Left err -> throwError $ AppRightError err
+    Right a -> throwError $ ExpectedFunction a
+    Left err -> throwError $ AppLeftError err
+infer (Box ts u) = do
+  let tys = snd <$> ts
+  res0 <-
+    runExceptT $
+    locally namesCtx (const mempty) $
+    locally ctx (const tys) (infer u)
+  case res0 of
     Right ty -> pure $ TyBox tys ty
-    Left err -> Left $ BoxError err
-infer nctx mctx ctx (LetBox mtys name a b) =
-  case infer nctx mctx ctx a of
-    Right (TyBox ts ty) ->
-      case infer nctx ((ts , ty) : mctx) ctx b of
+    Left err -> throwError $ BoxError err
+infer (LetBox _ name a b) = do
+  res0 <- runExceptT $ infer a
+  case res0 of
+    Right (TyBox ts ty) -> do
+      -- TODO: typecheck the annotations
+      res1 <- runExceptT $ locally modalCtx ((name, ts, ty) :) (infer b)
+      case res1 of
         Right ty' -> pure ty'
-        Left err -> Left $ LetBoxRightError err
-    Right ty -> Left $ ExpectedBox ty
-    Left err -> Left $ LetBoxLeftError err
+        Left err -> throwError $ LetBoxRightError err
+    Right ty -> throwError $ ExpectedBox ty
+    Left err -> throwError $ LetBoxLeftError err

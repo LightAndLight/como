@@ -29,8 +29,9 @@ eval nctx e =
   case e of
     Name n ->
       case Map.lookup n nctx of
-        Nothing -> error "eval: Var: stuck"
+        Nothing -> error "eval: Name: stuck"
         Just v -> eval nctx v
+    MName{} -> error "eval: MName: stuck"
     Var{} -> error "eval: Var: stuck"
     MVar{} -> error "eval: MVar: stuck"
     Lam name mty a -> VLam name mty a
@@ -43,15 +44,18 @@ eval nctx e =
     Box ts a -> VBox ts a
     LetBox _ _ a b ->
       let
-        !a' = fromValue $ eval nctx a
+        !a' = eval nctx a
       in
-        eval nctx $
-        substM
-          (\case
-              (0, _) -> a'
-              (_, []) -> error "impossible"
-              (n, _ : xs) -> MVar (n-1) xs)
-          b
+        case a' of
+          VBox _ a'' ->
+            eval nctx $
+            substM
+              (\case
+                  (0, _) -> a''
+                  (_, []) -> error "impossible"
+                  (n, _ : xs) -> MVar (n-1) xs)
+              b
+          _ -> error "eval: LetBox: stuck"
     NatZero -> VNatZero
     NatSuc a ->
       let
@@ -70,3 +74,28 @@ eval nctx e =
             eval nctx $
             subst (\case; 0 -> v; n -> Var (n-1)) b'
           _ -> error "eval: NatCase: stuck"
+
+-- | Staging evaluates all occurrences of LetBox
+stage :: Map Text Exp -> Exp -> Exp
+stage nctx e =
+  case e of
+    Name{} -> e
+    MName a b -> MName a $ stage nctx <$> b
+    Var{} -> e
+    MVar a b -> MVar a $ stage nctx <$> b
+    Lam a b c -> Lam a b $ stage nctx c
+    App a b -> App (stage nctx a) (stage nctx b)
+    Box a b -> Box a b
+    LetBox _ _ c d ->
+      case eval nctx $ stage nctx c of
+        VBox _ c' ->
+            substM
+              (\case
+                  (0, _) -> c'
+                  (_, []) -> error "impossible"
+                  (n, _ : xs) -> MVar (n-1) xs)
+              (stage nctx d)
+        _ -> error "stage: LetBox: stuck"
+    NatZero -> e
+    NatSuc a -> NatSuc $ stage nctx a
+    NatCase a b c -> NatCase (stage nctx a) (stage nctx b) (stage nctx c)

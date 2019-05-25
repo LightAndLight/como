@@ -10,6 +10,7 @@ data Ty
 
 data Exp
   = Name Text
+  | MName Text [Exp]
   | Var !Int
   | MVar !Int [Exp]
   | Lam Text Ty Exp
@@ -28,6 +29,7 @@ rho f n = f (n-1) + 1
 -- | Renaming bound variables
 rename :: (Int -> Int) -> Exp -> Exp
 rename _ (Name a) = Name a
+rename f (MName a as) = MName a $ rename f <$> as
 rename f (Var x) = Var (f x)
 rename f (MVar x as) = MVar x (rename f <$> as)
 rename f (Lam name ty a) = Lam name ty (rename (rho f) a)
@@ -41,6 +43,7 @@ rename f (NatCase z s n) = NatCase (rename f z) (rename f s) (rename f n)
 -- | Renaming bound modal variables
 renameM :: (Int -> Int) -> Exp -> Exp
 renameM _ (Name a) = Name a
+renameM f (MName a as) = MName a $ renameM f <$>  as
 renameM _ (Var x) = Var x
 renameM f (MVar x as) = MVar (f x) (renameM f <$> as)
 renameM f (Lam name ty a) = Lam name ty (renameM f a)
@@ -63,6 +66,7 @@ sigmaM f (n, _ : xs) = renameM (+1) $ f (n-1, xs)
 -- | Substitution
 subst :: (Int -> Exp) -> Exp -> Exp
 subst _ (Name a) = Name a
+subst f (MName a as) = MName a $ subst f <$> as
 subst f (Var x) = f x
 subst f (MVar x xs) = MVar x (subst f <$> xs)
 subst f (Lam name ty a) = Lam name ty (subst (sigma f) a)
@@ -81,6 +85,7 @@ getExp (_ : xs) n = getExp xs (n-1)
 -- | Modal substitution
 substM :: ((Int, [Exp]) -> Exp) -> Exp -> Exp
 substM _ (Name a) = Name a
+substM f (MName a as) = MName a $ substM f <$> as
 substM _ (Var x) = Var x
 substM f (MVar x as) = subst (getExp (substM f <$> as)) (f (x, as))
 substM f (Lam name ty a) = Lam name ty (substM f a)
@@ -90,3 +95,42 @@ substM f (LetBox tys name a b) = LetBox tys name (substM f a) (substM (sigmaM f)
 substM _ NatZero = NatZero
 substM f (NatSuc n) = NatSuc (substM f n)
 substM f (NatCase z s n) = NatCase (substM f z) (substM f s) (substM f n)
+
+-- | Bind a variable
+abstract :: Text -> Exp -> Exp
+abstract n = go 0
+  where
+    go depth e =
+      case e of
+        Name n' -> if n == n' then Var depth else Name n'
+        MName a as -> MName a $ go depth <$> as
+        Var v -> if v < depth then Var v else Var (v+1)
+        MVar a b -> MVar a (go depth <$> b)
+        Lam name ty a -> Lam name ty $ go (depth+1) a
+        App a b -> App (go depth a) (go depth b)
+        Box a b -> Box a b
+        LetBox tys name a b -> LetBox tys name (go depth a) (go depth b)
+        NatZero -> NatZero
+        NatSuc a -> NatSuc $ go depth a
+        NatCase a b c -> NatCase (go depth a) (go depth b) (go depth c)
+
+-- | Bind a modal variable
+--
+-- Also abstracts over relevant `Name`s by converting them to `MVar _ []`
+abstractM :: Text -> Exp -> Exp
+abstractM n = go 0
+  where
+    go depth e =
+      case e of
+        Name n' -> if n == n' then MVar depth [] else Name n'
+        MName n' as ->
+          (if n == n' then MVar depth else MName n') (go depth <$> as)
+        Var v -> Var v
+        MVar a b -> MVar (if a < depth then a else a+1) (go depth <$> b)
+        Lam name ty a -> Lam name ty $ go depth a
+        App a b -> App (go depth a) (go depth b)
+        Box a b -> Box a $ go depth b
+        LetBox tys name a b -> LetBox tys name (go depth a) (go (depth+1) b)
+        NatZero -> NatZero
+        NatSuc a -> NatSuc $ go depth a
+        NatCase a b c -> NatCase (go depth a) (go depth b) (go depth c)

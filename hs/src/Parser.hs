@@ -1,10 +1,11 @@
 {-# language OverloadedLists, OverloadedStrings #-}
+{-# language TypeApplications #-}
 module Parser where
 
-import Syntax (Exp(..), Ty(..))
+import Syntax (Exp(..), Ty(..), abstract, abstractM)
 
 import Control.Applicative ((<|>))
-import Data.Text (Text)
+import Text.Parser.LookAhead
 import qualified Text.Parser.Token.Highlight as Highlight
 import Text.Trifecta hiding (space)
 
@@ -17,14 +18,13 @@ tk m = m <* many space
 rightarrow :: CharParsing m => m ()
 rightarrow = () <$ text "->"
 
-pident :: (TokenParsing m, Monad m) => Unspaced m Text
-pident =
-  ident $
+idStyle :: CharParsing m => IdentifierStyle m
+idStyle =
   IdentifierStyle
   { _styleName = "variable"
   , _styleStart = lower
   , _styleLetter = alphaNum
-  , _styleReserved = ["let"]
+  , _styleReserved = ["let", "in", "caseNat", "zero", "suc"]
   , _styleHighlight = Highlight.Identifier
   , _styleReservedHighlight = Highlight.ReservedIdentifier
   }
@@ -45,10 +45,57 @@ pty = arr
       TyNat <$ text "Nat" <|>
       between (tk $ char '(') (char ')') (tk $ pty)
 
-pexp :: (TokenParsing m, Monad m) => Unspaced m Exp
-pexp = lam
+pexp :: (LookAheadParsing m, TokenParsing m, Monad m) => Unspaced m Exp
+pexp =
+  letBox_ <|>
+  lam <|>
+  app
   where
-    lam =
-      (\(n, ty) -> Lam n ty) <$ char '\\' <*>
-      (between (tk $ char '(') (char ')') $ (,) <$> pident <* text ":" <*> pty) <* tk rightarrow <*>
+    letBox_ =
+      (\ts n a -> LetBox ts n a . abstractM n) <$ tk (reserve idStyle "let") <* tk (char '[') <*>
+      optional (tk $ sepBy1 (tk pty) (tk $ char ',')) <* tk (char '|') <*>
+      tk (ident idStyle) <* tk (string "|]") <* tk (char '=') <*>
+      tk pexp <* tk (reserve idStyle "in") <*>
       pexp
+
+    app =
+      NatCase <$ tk (reserve idStyle "caseNat") <*> tk atom <*> tk atom <*> atom <|>
+      NatSuc <$ tk (reserve idStyle "suc") <*> atom <|>
+      foldl1 App <$>
+        sepBy1
+          atom
+          (try $
+           some space <*
+           Unspaced (lookAhead $ () <$ runUnspaced atom_ <|> () <$ oneOf "[("))
+
+    lam =
+      (\(n, ty) -> Lam n ty . abstract n) <$ tk (char '\\') <*>
+      tk
+        (between
+           (tk $ char '(')
+           (char ')')
+           ((,) <$> tk (ident idStyle) <* tk (text ":") <*> tk pty) <?>
+         "annotated binder") <* tk rightarrow <*>
+      pexp
+
+    box =
+      (\ts a -> Box ts $ foldr (\(n, _) -> abstract n) a ts) <$ tk (char '[') <*>
+      sepBy
+        ((,) <$> tk (ident idStyle) <* tk (text ":") <*> tk pty)
+        (tk $ char ',') <* tk (char '|') <*>
+      tk pexp <* text "|]"
+
+    name =
+      (\i -> maybe (Name i) (MName i)) <$>
+      ident idStyle <*>
+      optional (between (tk $ char '[') (char ']') $ sepBy (tk pexp) (tk $ char ','))
+
+    atom_ =
+      NatZero <$ reserve idStyle "zero" <|>
+      name
+
+    enclosed =
+      box <|>
+      between (tk $ char '(') (char ')') (tk pexp)
+
+    atom = atom_ <|> enclosed
