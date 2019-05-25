@@ -1,1 +1,4 @@
 *.agdai
+**/dist
+**/dist-newstyle
+*.ghc.*
